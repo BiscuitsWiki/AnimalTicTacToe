@@ -1,0 +1,232 @@
+# AnimalTicTacToe 服务器部署指南
+
+> 适用：将网页版部署到公网服务器，发链接给好友即玩。
+> 形态：Docker Compose 单机部署——web 容器（nginx，唯一公网入口 80 端口）+ server 容器（NestJS + SQLite，仅内网）。
+> 全流程照抄命令即可，无需改动任何代码。
+
+---
+
+## 一、服务器选购
+
+| 项 | 建议 |
+|---|---|
+| 厂商 | 阿里云 / 腾讯云轻量应用服务器（新用户活动价很低） |
+| 配置 | **2核 4G 起步**（client 的 Taro 构建吃内存；2G 会 OOM，可本地构建后只传产物规避） |
+| 系统 | Ubuntu 22.04 / Debian 12（本文命令按 Ubuntu 写） |
+| 地域 | 只发国内好友 → 国内节点（用域名必须 ICP 备案）；不想备案 → 香港/新加坡节点（延迟略高但免备案） |
+| 带宽 | 轻量套餐自带 4-6Mbps 足够（游戏流量极小，仅图片上传吃带宽） |
+
+**只需放行一个端口：80（HTTP）。** 3000 不放行（compose 已收敛为内网）。
+
+---
+
+## 二、服务器初始化（装 Docker）
+
+SSH 登录服务器后执行：
+
+```bash
+# 以 root 操作；若用普通用户，命令前加 sudo
+apt update && apt upgrade -y
+
+# 一键安装 Docker + Compose 插件（官方脚本）
+curl -fsSL https://get.docker.com | sh
+
+# 验证
+docker --version          # 期望 >= 24
+docker compose version    # 期望 v2.x
+```
+
+> 国内服务器若拉取镜像慢，配置镜像加速器：
+> ```bash
+> mkdir -p /etc/docker && cat > /etc/docker/daemon.json <<'EOF'
+> { "registry-mirrors": ["https://docker.m.daocloud.io"] }
+> EOF
+> systemctl restart docker
+> ```
+
+---
+
+## 三、上传代码
+
+任选一种：
+
+**方式 A：Git（推荐，后续更新方便）**
+
+```bash
+# 本地（Windows PowerShell）推送到 GitHub/Gitee 后，服务器上：
+apt install -y git
+git clone https://github.com/<你的用户名>/AnimalTicTacToe.git /opt/att
+cd /opt/att
+```
+
+**方式 B：直接打包上传（不依赖 git 托管）**
+
+```powershell
+# 本地 PowerShell（项目根目录执行）：
+tar --exclude=node_modules --exclude=client/dist --exclude=server/dist `
+    --exclude=.env --exclude="*.db" --exclude=server/uploads `
+    -czf att.tar.gz .
+scp att.tar.gz root@<服务器IP>:/opt/
+```
+
+```bash
+# 服务器：
+mkdir -p /opt/att && tar -xzf /opt/att.tar.gz -C /opt/att && cd /opt/att
+```
+
+---
+
+## 四、首次部署（3 条命令）
+
+```bash
+cd /opt/att
+
+# 1. 生成强随机管理密钥并写入 .env
+echo "ADMIN_TOKEN=$(openssl rand -hex 24)" > .env
+cat .env    # 记下这个值，运营后台登录要用
+
+# 2. 构建并启动（首次约 5-10 分钟）
+#    -p att 显式指定项目名 → 数据卷固定为 att_server_data / att_server_uploads，与部署目录名解耦
+docker compose -p att up -d --build
+
+# 3. 观察就绪状态
+docker compose -p att ps              # 两个容器均应为 Up (healthy)
+docker compose -p att logs -f server  # Ctrl+C 退出日志
+```
+
+看到 `att-server` 与 `att-web` 都在运行后，浏览器访问 `http://<服务器IP>/` —— 能进主菜单即部署成功。
+
+---
+
+## 五、自动化验收（必做一次）
+
+验收脚本检查 14 项：H5 首页、静态缓存、运营后台、登录、工坊、战绩、上传路由、WS 反代、房间码、端口收敛等。
+
+```bash
+cd /opt/att
+
+# 方式 A：服务器装了 Node >= 22
+node acceptance.mjs http://localhost
+
+# 方式 B：不装 Node，直接用 Docker 跑（推荐）
+docker run --rm --network host -v /opt/att:/app -w /app node:22-alpine \
+    node acceptance.mjs http://localhost
+```
+
+期望输出最后一行：`全部通过，部署验收成功。`
+
+若有 FAIL 项，按提示排查（常见原因见第八节）。全过后，把 `http://<服务器IP>/` 发给好友即可。
+
+---
+
+## 六、日常运维
+
+### 更新版本
+
+```bash
+cd /opt/att
+git pull                                # 方式 B 上传的则重新 tar + 解压覆盖
+docker compose -p att up -d --build     # 重建（数据在卷里，不会丢）
+```
+
+### 数据备份（建议加 cron）
+
+```bash
+# 手动备份一次：
+docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
+    tar -czf /backup/att-data-$(date +%F).tar.gz -C /data .
+docker run --rm -v att_server_uploads:/data -v /opt/backup:/backup alpine \
+    tar -czf /backup/att-uploads-$(date +%F).tar.gz -C /data .
+
+# 每天凌晨 3 点自动备份：
+(crontab -l 2>/dev/null; echo "0 3 * * * docker run --rm -v att_server_data:/d -v /opt/backup:/b alpine tar -czf /b/att-data-\$(date +\%F).tar.gz -C /d . && docker run --rm -v att_server_uploads:/d -v /opt/backup:/b alpine tar -czf /b/att-uploads-\$(date +\%F).tar.gz -C /d .") | crontab -
+```
+
+> 卷名 `att_server_data` / `att_server_uploads` 由部署命令的 `-p att` 决定。换过项目名的话用 `docker volume ls` 确认实际名称。
+
+### 数据恢复
+
+```bash
+docker compose -p att down
+docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
+    sh -c "rm -rf /data/* && tar -xzf /backup/att-data-2026-XX-XX.tar.gz -C /data"
+docker compose -p att up -d
+```
+
+### 常用命令速查
+
+| 目的 | 命令 |
+|---|---|
+| 看日志 | `docker compose -p att logs -f server` / `... logs -f web` |
+| 重启 | `docker compose -p att restart` |
+| 停服 | `docker compose -p att down`（数据保留） |
+| 查数据卷 | `docker volume ls` |
+
+### 运营后台
+
+浏览器访问 `http://<服务器IP>/admin/`，登录密钥 = `.env` 里的 `ADMIN_TOKEN`。
+可审核 UGC 棋子卡、处理举报。**该地址与密钥不要外泄。**
+
+---
+
+## 七、可选：域名 + HTTPS（发微信前的建议）
+
+客户端已做同源化（自动 ws/wss 切换），**无需改代码**，任选一层方案：
+
+### 方案 A：Caddy 自动 HTTPS（最简单，需域名已解析到服务器 IP）
+
+```bash
+apt install -y caddy
+cat > /etc/caddy/Caddyfile <<'EOF'
+你的域名.com {
+    reverse_proxy 127.0.0.1:80
+}
+EOF
+systemctl reload caddy
+```
+
+Caddy 自动申请续期证书。注意：国内服务器 + 域名需先完成 ICP 备案（约 2 周）；免备案用境外服务器。
+
+### 方案 B：Cloudflare Tunnel（免开放端口、免服务器证书）
+
+Cloudflare 仪表盘 → Zero Trust → Networks → Tunnels 创建隧道，指向 `http://att-web:80` 或 `http://127.0.0.1:80`，域名托管在 Cloudflare。强制 HTTPS 后客户端自动走 wss。
+
+配置后用验收脚本复测：`node acceptance.mjs https://你的域名.com`
+
+---
+
+## 八、故障排查
+
+| 症状 | 原因与处理 |
+|---|---|
+| `docker compose ps` 里 server 反复重启 | `docker compose logs server` 看报错；多为 `.env` 缺 `ADMIN_TOKEN`（compose 会直接报错提示） |
+| 首页打不开（超时） | 云厂商安全组/防火墙没放行 80；服务器内 `ufw status` 也检查一下 |
+| 首页能开，联机匹配转圈 | `/ws` 反代异常，跑验收脚本看 WS 两项；确认 nginx.conf 已随镜像更新（旧镜像重新 build） |
+| 工坊图片上传报错 | 看 `docker compose logs server`；3MB 以上文件会被 nginx 拦（client_max_body_size 3m） |
+| 工坊图片显示 404 | `/uploads` 反代被静态规则截走 → 确认 nginx.conf 用的是 `^~` 前缀匹配的版本 |
+| 验收提示 3000 端口可达 | compose 的 server 服务被加了 ports 映射，删掉只留 expose，`docker compose up -d` 重建 |
+| 构建时 client 阶段 OOM 被杀 | 内存不足 4G；或改用「本地构建产物」方式：本地 `pnpm build:h5` 后把 client/dist 传上去，用只含 nginx 阶段的 Dockerfile |
+| 微信内打开链接提示非安全 | 未套 HTTPS，见第七节 |
+
+---
+
+## 九、架构速览（排障时的心智模型）
+
+```
+好友浏览器
+   │  http://IP（或 https://域名 → Caddy/CF → 80）
+   ▼
+[att-web 容器 :80]  nginx
+   ├─ /              → 静态托管 H5（client/dist）
+   ├─ /ws            → 反代 att-server:3000（WebSocket，透传 Upgrade，idle 1h）
+   ├─ /uploads /auth /pieces /game /admin → 反代 att-server:3000
+   ▼
+[att-server 容器 :3000，不对公网]  NestJS + Prisma + SQLite
+   ├─ 卷 server_data    → SQLite 数据库
+   └─ 卷 server_uploads → UGC 图片
+```
+
+- 客户端地址逻辑：[client/src/config.ts](client/src/config.ts) —— 生产同源（API 相对路径 + ws/wss 自适应）
+- 反代规则：[client/nginx.conf](client/nginx.conf)
+- 编排定义：[docker-compose.yml](docker-compose.yml)
+- 验收脚本：[acceptance.mjs](acceptance.mjs)

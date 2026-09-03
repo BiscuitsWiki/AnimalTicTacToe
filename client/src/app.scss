@@ -1,0 +1,39 @@
+/**
+ * 全局样式。
+ * H5 宽屏适配：Taro 按 750 设计稿把 px 编译为 rem（rootValue = 40），
+ * html font-size 由 runtime 按视口宽度线性设置——桌面宽屏上 UI 会被整体
+ * 等比拉伸铺满全宽。此处在宽屏下：
+ * 1. 容器宽度取 min(600px, 50vh)：随视口高度走，模拟 2:1 手机屏
+ *    （主流手机屏比例约 19.5:9 ~ 20:9），保证整页内容一屏放下无需滚动
+ * 2. rem 基准与容器宽度严格绑定：font-size = 容器宽 / 18.75
+ *    （750 设计稿 / rootValue 40 = 18.75），宽屏上限 600px 对应 32px
+ * 3. 页面容器限宽居中，两侧露出背景色，形成"手机视窗"效果
+ *
+ * 注意：本文件的 px 必须是真实浏览器像素（rem 基准、容器宽度），
+ * 故禁用 pxtransform 转换，否则会被编译成 rem 导致基准错乱。
+ */
+
+/*postcss-pxtransform disable*/
+@media (min-width: 600px) {
+  html {
+    /* 覆盖 Taro runtime 按视口宽度设置的内联样式；
+       50vh / 18.75 = 2.667vh，600px / 18.75 = 32px */
+    font-size: min(32px, 2.667vh) !important;
+  }
+
+  body {
+    background: #e7e1d5;
+  }
+
+  .taro_router,
+  .taro_page {
+    max-width: min(600px, 50vh);
+    margin: 0 auto;
+    min-height: 100vh;
+    box-shadow: 0 0 32px rgba(0, 0, 0, 0.1);
+  }
+
+  .taro_page {
+    background: #fffdf9;
+  }
+}

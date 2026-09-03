@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>动物井字棋 · 运营后台</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f4ede2;
+    color: #3a3a3a;
+    min-height: 100vh;
+  }
+  header {
+    background: #fffdf9;
+    border-bottom: 1px solid #e8e0d2;
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 20px; letter-spacing: 2px; }
+  header h1 span { color: #e0654a; }
+  .token-box { display: flex; align-items: center; gap: 8px; }
+  .token-box input {
+    padding: 8px 12px;
+    border: 1px solid #d8d0c2;
+    border-radius: 8px;
+    font-size: 14px;
+    width: 240px;
+    background: #faf7f1;
+  }
+  button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    background: #e0654a;
+    color: #fff;
+  }
+  button.secondary { background: #fff; color: #e0654a; border: 1px solid #e0654a; }
+  button.danger { background: #c0392b; }
+  button:disabled { background: #c8c0b2; cursor: not-allowed; }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 32px 64px; }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: #fffdf9;
+    border-radius: 12px;
+    padding: 16px;
+    text-align: center;
+    border: 1px solid #eee6d8;
+  }
+  .stat-card .num { font-size: 28px; font-weight: bold; }
+  .stat-card .num.alert { color: #e0654a; }
+  .stat-card .label { font-size: 12px; color: #8a8175; margin-top: 4px; }
+
+  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
+  .tab {
+    padding: 10px 24px;
+    border-radius: 24px;
+    background: #fffdf9;
+    border: 1px solid #e8e0d2;
+    cursor: pointer;
+    font-size: 15px;
+    user-select: none;
+  }
+  .tab.active { background: #e0654a; color: #fff; border-color: #e0654a; }
+  .tab .badge {
+    display: inline-block;
+    min-width: 20px;
+    padding: 0 6px;
+    margin-left: 6px;
+    border-radius: 10px;
+    background: #e0654a;
+    color: #fff;
+    font-size: 12px;
+    line-height: 18px;
+  }
+  .tab.active .badge { background: #fff; color: #e0654a; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  .card {
+    background: #fffdf9;
+    border-radius: 16px;
+    padding: 20px;
+    border: 1px solid #eee6d8;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .card-top { display: flex; gap: 16px; }
+  .card img {
+    width: 96px;
+    height: 96px;
+    object-fit: cover;
+    border-radius: 12px;
+    border: 2px solid #e8e0d2;
+    background: #f4ede2;
+  }
+  .card-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .card-info .name { font-size: 18px; font-weight: bold; }
+  .card-info .meta { font-size: 13px; color: #8a8175; }
+  .tag {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    color: #fff;
+    align-self: flex-start;
+  }
+  .reports-box {
+    background: #fdf0ec;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #7a5148;
+  }
+  .reports-box .r-line { padding: 3px 0; border-bottom: 1px dashed #efcfc4; }
+  .reports-box .r-line:last-child { border-bottom: none; }
+  .card-actions { display: flex; gap: 8px; }
+  .card-actions button { flex: 1; }
+  .reject-reason {
+    padding: 8px 12px;
+    border: 1px solid #d8d0c2;
+    border-radius: 8px;
+    font-size: 14px;
+    display: none;
+  }
+  .empty {
+    text-align: center;
+    color: #b0a89a;
+    padding: 64px 0;
+    font-size: 15px;
+  }
+  .toast {
+    position: fixed;
+    bottom: 32px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #3a3a3a;
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 24px;
+    font-size: 14px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+    z-index: 10;
+  }
+  .toast.show { opacity: 0.95; }
+  .locked { opacity: 0.4; pointer-events: none; }
+  #login-tip { text-align: center; padding: 96px 0; color: #8a8175; font-size: 15px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🐾 动物井字棋 · <span>运营后台</span></h1>
+  <div class="token-box">
+    <input id="token" type="password" placeholder="管理员 Token">
+    <button id="save-token">连接</button>
+  </div>
+</header>
+
+<main>
+  <div id="login-tip">请输入管理员 Token 连接后台</div>
+  <div id="dashboard" style="display:none">
+    <div class="stats" id="stats"></div>
+    <div class="tabs">
+      <div class="tab active" data-tab="pending">待审核<span class="badge" id="badge-pending">0</span></div>
+      <div class="tab" data-tab="reported">被举报<span class="badge" id="badge-reported">0</span></div>
+    </div>
+    <div class="cards" id="cards"></div>
+    <div class="empty" id="empty" style="display:none">队列为空，喝杯茶吧 ☕</div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict'
+
+const $ = s => document.querySelector(s)
+const TOKEN_KEY = 'attt_admin_token'
+let currentTab = 'pending'
+
+const REASON_ZH = {
+  porn: '色情低俗', violence: '暴力血腥', politics: '政治敏感',
+  infringement: '侵权盗用', ad: '广告骚扰', other: '其他',
+}
+const ELEMENT_ZH = {
+  fire: '火', water: '水', grass: '草', electric: '电', ice: '冰', fighting: '格斗',
+  poison: '毒', ground: '地面', flying: '飞行', psychic: '超能', bug: '虫', rock: '岩石',
+  ghost: '幽灵', dragon: '龙', dark: '恶', steel: '钢', fairy: '妖精', normal: '一般',
+}
+const ELEMENT_COLOR = {
+  fire: '#e8632c', water: '#3d8fd1', grass: '#5da742', electric: '#d9a521', ice: '#6fc3d8',
+  fighting: '#b5543b', poison: '#8e44ad', ground: '#a9743b', flying: '#7f9bd9', psychic: '#d64d7c',
+  bug: '#8ba024', rock: '#8d7b5e', ghost: '#5f4d78', dragon: '#3b5db0', dark: '#4a3b45',
+  steel: '#7a8f9c', fairy: '#d97fa2', normal: '#8a8175',
+}
+
+function getToken() { return localStorage.getItem(TOKEN_KEY) || '' }
+function authHeaders() { return { 'x-admin-token': getToken() } }
+function toast(msg) {
+  const t = $('#toast')
+  t.textContent = msg
+  t.classList.add('show')
+  setTimeout(() => t.classList.remove('show'), 2200)
+}
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+}
+function fmtTime(iso) {
+  const d = new Date(iso)
+  return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: { ...(options.headers || {}), ...authHeaders() },
+  })
+  const data = await res.json().catch(() => null)
+  if (!res.ok) throw new Error(data?.message || `${res.status}`)
+  return data
+}
+
+// ---------- 渲染 ----------
+
+function renderStats(s) {
+  const items = [
+    { num: s.pieces.pending, label: '待审核', alert: s.pieces.pending > 0 },
+    { num: s.pieces.reported, label: '被举报下架', alert: s.pieces.reported > 0 },
+    { num: s.pieces.approved, label: '上架中' },
+    { num: s.pieces.rejected, label: '已驳回' },
+    { num: s.matches.today, label: '今日对局' },
+    { num: s.matches.total, label: '累计对局' },
+    { num: s.reports.today, label: '今日举报' },
+  ]
+  $('#stats').innerHTML = items.map(i =>
+    `<div class="stat-card">
+       <div class="num ${i.alert ? 'alert' : ''}">${i.num}</div>
+       <div class="label">${i.label}</div>
+     </div>`).join('')
+  $('#badge-pending').textContent = s.pieces.pending
+  $('#badge-reported').textContent = s.pieces.reported
+}
+
+function renderCard(p) {
+  const color = ELEMENT_COLOR[p.element] || '#8a8175'
+  const reportsHtml = p.reports?.length ? `
+    <div class="reports-box">
+      ${p.reports.map(r =>
+        `<div class="r-line">🚩 ${esc(REASON_ZH[r.reason] || r.reason)} · ${fmtTime(r.createdAt)}${r.matchId ? ` · 对局 ${esc(r.matchId)}` : ''}</div>`
+      ).join('')}
+    </div>` : ''
+  return `
+  <div class="card" data-id="${esc(p.id)}">
+    <div class="card-top">
+      <img src="${esc(p.imageUrl)}" alt="${esc(p.name)}" loading="lazy"
+           onerror="this.style.opacity=0.3">
+      <div class="card-info">
+        <div class="name">${esc(p.name)}</div>
+        <span class="tag" style="background:${color}">${esc(ELEMENT_ZH[p.element] || p.element)}</span>
+        <div class="meta">作者：${esc(p.authorId)}</div>
+        <div class="meta">提交：${fmtTime(p.createdAt)}</div>
+        ${p.reportCount ? `<div class="meta">被举报 ${p.reportCount} 次</div>` : ''}
+        ${p.rejectReason ? `<div class="meta" style="color:#c0392b">原因：${esc(p.rejectReason)}</div>` : ''}
+      </div>
+    </div>
+    ${reportsHtml}
+    <input class="reject-reason" placeholder="驳回原因（必填）">
+    <div class="card-actions">
+      <button class="secondary" onclick="review('${esc(p.id)}','reject')">驳回</button>
+      <button onclick="review('${esc(p.id)}','approve')">通过上架</button>
+    </div>
+  </div>`
+}
+
+function renderList(pieces) {
+  $('#empty').style.display = pieces.length ? 'none' : 'block'
+  $('#cards').innerHTML = pieces.map(renderCard).join('')
+}
+
+// ---------- 数据加载 ----------
+
+async function loadDashboard() {
+  const s = await api('/admin/stats')
+  renderStats(s)
+  const list = currentTab === 'pending'
+    ? await api('/pieces/pending')
+    : await api('/pieces/reported')
+  renderList(list)
+}
+
+async function review(id, action) {
+  const card = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`)
+  const reasonInput = card?.querySelector('.reject-reason')
+  const reason = reasonInput?.value.trim()
+
+  if (action === 'reject') {
+    if (!reason) {
+      reasonInput.style.display = 'block'
+      reasonInput.focus()
+      toast('请填写驳回原因')
+      return
+    }
+    reasonInput.style.display = 'block'
+  }
+  if (!confirm(action === 'approve'
+    ? '确认通过并上架该棋子？'
+    : `确认驳回？原因：${reason}`)) return
+
+  const q = `action=${action}${reason ? `&reason=${encodeURIComponent(reason)}` : ''}`
+  try {
+    await api(`/pieces/${id}/review?${q}`, { method: 'POST' })
+    toast(action === 'approve' ? '已通过上架' : '已驳回')
+    await loadDashboard()
+  } catch (e) {
+    toast(`操作失败：${e.message}`)
+  }
+}
+
+// ---------- 事件 ----------
+
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'))
+    tab.classList.add('active')
+    currentTab = tab.dataset.tab
+    loadDashboard().catch(e => toast(`加载失败：${e.message}`))
+  })
+})
+
+$('#save-token').addEventListener('click', async () => {
+  const token = $('#token').value.trim()
+  if (!token) return toast('请输入 Token')
+  localStorage.setItem(TOKEN_KEY, token)
+  try {
+    await loadDashboard()
+    $('#login-tip').style.display = 'none'
+    $('#dashboard').style.display = 'block'
+    toast('连接成功')
+  } catch {
+    toast('Token 无效或服务不可用')
+  }
+})
+
+$('#token').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $('#save-token').click()
+})
+
+// 初始化：已有 token 则自动连接
+;(async function init() {
+  const saved = getToken()
+  if (saved) {
+    $('#token').value = saved
+    try {
+      await loadDashboard()
+      $('#login-tip').style.display = 'none'
+      $('#dashboard').style.display = 'block'
+      return
+    } catch { /* token 失效，停留在登录提示 */ }
+  }
+  $('#login-tip').style.display = 'block'
+})()
+</script>
+</body>
+</html>

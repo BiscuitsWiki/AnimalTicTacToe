@@ -1,0 +1,20 @@
+# 依赖与产物
+node_modules/
+client/dist/
+server/dist/
+*.log
+*.tsbuildinfo
+
+# 环境与密钥
+.env
+.env.local
+
+# 数据库与上传内容（本地开发产物，不入库）
+*.db
+*.db-journal
+server/uploads/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+.idea/

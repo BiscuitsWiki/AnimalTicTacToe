@@ -1,0 +1,86 @@
+// Prisma 数据模型
+// 开发期用 SQLite（零配置），上线切 PostgreSQL 只需改 DATABASE_URL 连接串
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// 用户（P3 正式登录：guest 设备号 / wechat 小程序）
+model User {
+  id        String   @id @default(cuid())
+  provider  String                    // 'guest' | 'wechat'
+  openId    String                    // guest: 设备号；wechat: openid
+  nickname  String
+  token     String   @unique          // 登录态令牌（开发期明文存储，生产换 JWT）
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([provider, openId])
+}
+
+// 棋子卡（UGC 创作内容）
+// 审核状态机: pending -> approved / rejected；上架后被举报达到阈值自动回退 pending（P3）
+model Piece {
+  id          String   @id @default(cuid())
+  name        String                     // 棋子名（1~12 字）
+  element     String                     // 18 属性之一（服务端校验白名单）
+  imageUrl    String                     // 图片 URL（开发期: /uploads/xxx.png）
+  status      String   @default("pending") // pending | approved | rejected | reported
+  rejectReason String?                 // 驳回原因（rejected 时展示给创作者）
+  reportCount Int      @default(0)     // 有效举报计数（达到阈值自动下架重审）
+  authorId    String   @default("guest") // P2.2 接入微信登录后替换
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([authorId])
+}
+
+// 对局记录（P2.3：结束时一次性落库，winnerSide 空表示对局丢失）
+model Match {
+  id           String   @id @default(cuid())
+  redPlayerId  String
+  bluePlayerId String
+  redName      String
+  blueName     String
+  // 'red' | 'blue' | 'draw'
+  winnerSide   String
+  // 'line' | 'board_full' | 'opponent_disconnect'
+  reason       String
+  createdAt    DateTime           // 开局时间
+  endedAt      DateTime @default(now())
+
+  @@index([redPlayerId])
+  @@index([bluePlayerId])
+}
+
+// 棋谱（完整动作序列，便于回放/复盘/申诉）
+model MatchAction {
+  id      String @id @default(cuid())
+  matchId String
+  seq     Int
+  side    String        // 'red' | 'blue'
+  type    String        // 'draw' | 'skip_draw' | 'place'
+  payload String        // JSON 字符串（SQLite 无 Json 标量，序列化存储）
+
+  @@index([matchId])
+}
+
+// 棋子举报（P3：对局内举报可疑 UGC 内容）
+model PieceReport {
+  id         String   @id @default(cuid())
+  pieceId    String
+  reporterId String                     // 举报者 playerId
+  matchId    String?                    // 举报来源对局（追溯用）
+  reason     String                     // 举报理由（预设标签）
+  createdAt  DateTime @default(now())
+
+  // 同一玩家对同一棋子只计一次有效举报
+  @@unique([pieceId, reporterId])
+  @@index([pieceId])
+}

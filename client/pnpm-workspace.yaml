@@ -1,0 +1,12 @@
+# 允许以下依赖执行 postinstall 构建脚本（原生二进制安装）
+allowBuilds:
+  '@parcel/watcher': true
+  '@swc/core': true
+  '@tarojs/binding': true
+  '@tarojs/cli': true
+  core-js: true
+  core-js-pure: true
+  esbuild: true
+
+# 关闭运行脚本前的依赖自检（沙箱环境下会误报失败）
+verifyDepsBeforeRun: false

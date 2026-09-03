@@ -1,0 +1,147 @@
+.history {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  padding: 40px 32px;
+  box-sizing: border-box;
+  background: #f7f4ef;
+
+  &__back {
+    align-self: flex-start;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 64px;
+    padding: 0 36px;
+    border-radius: 999px;
+    background: #e8e2d8;
+    color: #6b6357;
+    font-size: 26px;
+
+    &:active {
+      opacity: 0.85;
+    }
+  }
+
+  /* 统计卡 */
+  &__summary {
+    display: flex;
+    width: 100%;
+    max-width: 600px;
+    margin-top: 32px;
+    padding: 32px 0;
+    border-radius: 24px;
+    background: #fff;
+    border: 3px solid #e5dfd3;
+  }
+
+  &__summary-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+
+  &__summary-num {
+    font-size: 52px;
+    font-weight: bold;
+    color: #3a3a3a;
+    line-height: 1.1;
+
+    &--win {
+      color: #d05048;
+    }
+
+    &--rate {
+      color: #4a7ba8;
+    }
+  }
+
+  &__summary-label {
+    font-size: 24px;
+    color: #8a8175;
+  }
+
+  &__empty {
+    margin-top: 120px;
+    font-size: 28px;
+    color: #8a8175;
+  }
+
+  /* 对局列表 */
+  &__list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: 100%;
+    max-width: 600px;
+    margin-top: 32px;
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 24px 28px;
+    border-radius: 20px;
+    background: #fff;
+    border: 3px solid #e5dfd3;
+
+    &--win {
+      border-color: #eab6b0;
+    }
+
+    &--lose {
+      border-color: #b6c8ea;
+    }
+  }
+
+  &__item-result {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    font-size: 30px;
+    font-weight: bold;
+    color: #fff;
+
+    .history__item--win & {
+      background: #e0654a;
+    }
+
+    .history__item--lose & {
+      background: #6f92c4;
+    }
+
+    .history__item--draw & {
+      background: #a39a89;
+    }
+  }
+
+  &__item-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow: hidden;
+  }
+
+  &__item-oppo {
+    font-size: 28px;
+    font-weight: bold;
+    color: #3a3a3a;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__item-meta {
+    font-size: 22px;
+    color: #8a8175;
+  }
+}

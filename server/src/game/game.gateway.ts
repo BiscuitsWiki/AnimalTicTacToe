@@ -1,0 +1,151 @@
+/**
+ * WS 网关：客户端消息格式 { event: string, data: object }（与 @nestjs/platform-ws 默认协议一致）。
+ * H5 用浏览器原生 WebSocket，小程序用 Taro.connectSocket，均可直连。
+ */
+import { SubscribeMessage, WebSocketGateway } from '@nestjs/websockets'
+import type { WebSocket } from 'ws'
+import { AuthService } from '../auth/auth.service.js'
+import { MatchService } from './match.service.js'
+import { RoomService } from './room.service.js'
+
+@WebSocketGateway({ path: '/ws' })
+export class GameGateway {
+  constructor(
+    private readonly matchService: MatchService,
+    private readonly roomService: RoomService,
+    private readonly auth: AuthService,
+  ) {}
+
+  handleConnection(client: WebSocket): void {
+    ;(client as unknown as { _alive?: boolean })._alive = true
+  }
+
+  handleDisconnect(client: WebSocket): void {
+    this.matchService.handleDisconnect(client)
+    this.roomService.handleDisconnect(client)
+  }
+
+  @SubscribeMessage('queue:join')
+  async onQueueJoin(client: WebSocket, data: { token?: string; playerId?: string; name?: string }) {
+    // 登录态优先：token 解析出 userId/昵称；未登录回退旧行为（playerId+name）
+    const user = await this.auth.verifyTokenOrNull(data?.token)
+    const playerId = user?.id ?? String(data?.playerId ?? '').slice(0, 64)
+    if (!playerId) return { ok: false, error: 'unauthorized' }
+    const name = user?.nickname ?? (String(data?.name ?? '玩家').slice(0, 16) || '玩家')
+    // 互斥：已在约战房间等待中则不允许同时排匹配队列
+    if (this.roomService.isPlayerInRoom(playerId)) return { ok: false, error: 'in_room' }
+    void this.matchService.joinQueue(playerId, name, client)
+    return { ok: true }
+  }
+
+  @SubscribeMessage('queue:leave')
+  onQueueLeave(client: WebSocket, data: { playerId: string }) {
+    this.matchService.leaveQueue(String(data?.playerId ?? ''))
+    return { ok: true }
+  }
+
+  /** 断线重连：token（优先）或 playerId 恢复对局 */
+  @SubscribeMessage('match:reconnect')
+  async onReconnect(client: WebSocket, data: { token?: string; playerId?: string }) {
+    const user = await this.auth.verifyTokenOrNull(data?.token)
+    const playerId = user?.id ?? String(data?.playerId ?? '').slice(0, 64)
+    if (!playerId) {
+      client.send(JSON.stringify({ event: 'match:reconnect', data: { ok: false, error: 'unauthorized' } }))
+      return
+    }
+    const ok = this.matchService.reconnect(client, playerId)
+    if (ok) {
+      // 房间成员 socket 重绑 + 补发房间状态（恢复大厅 UI）
+      this.roomService.rebindSocket(playerId, client)
+      this.roomService.resendState(playerId, client)
+      client.send(JSON.stringify({ event: 'match:reconnect', data: { ok: true } }))
+    } else {
+      // 不在对局中：附带所在房间（若有），客户端据此走房间重进
+      const inRoom = this.roomService.isPlayerInRoom(playerId)
+        ? this.roomService.roomIdOf(playerId)
+        : undefined
+      client.send(JSON.stringify({ event: 'match:reconnect', data: { ok: false, error: 'not_in_match', inRoom } }))
+    }
+  }
+
+  @SubscribeMessage('game:place')
+  onPlace(client: WebSocket, data: { handIdx: number; cellIdx: number }) {
+    this.matchService.applyPlace(
+      client,
+      Number(data?.handIdx),
+      Number(data?.cellIdx),
+    )
+    return { ok: true }
+  }
+
+  // ---------- P4.1 房间约战 ----------
+  // 注：WsAdapter 对 @SubscribeMessage 返回值的应答是裸 JSON（无事件名信封），
+  // 客户端事件总线无法按事件名分发，故结果统一用带信封的 room:created / room:joined 推送。
+
+  @SubscribeMessage('room:create')
+  async onRoomCreate(client: WebSocket, data: { token?: string; playerId?: string; name?: string }) {
+    const user = await this.auth.verifyTokenOrNull(data?.token)
+    const playerId = user?.id ?? String(data?.playerId ?? '').slice(0, 64)
+    if (!playerId) return { ok: false, error: 'unauthorized' }
+    const name = user?.nickname ?? (String(data?.name ?? '玩家').slice(0, 16) || '玩家')
+    const res = this.roomService.createRoom(playerId, name, client)
+    client.send(JSON.stringify({ event: 'room:created', data: res }))
+    return { ok: true }
+  }
+
+  @SubscribeMessage('room:join')
+  async onRoomJoin(
+    client: WebSocket,
+    data: { roomId?: string; token?: string; playerId?: string; name?: string },
+  ) {
+    const user = await this.auth.verifyTokenOrNull(data?.token)
+    const playerId = user?.id ?? String(data?.playerId ?? '').slice(0, 64)
+    if (!playerId) return { ok: false, error: 'unauthorized' }
+    const name = user?.nickname ?? (String(data?.name ?? '玩家').slice(0, 16) || '玩家')
+    // 统一大写并截断，容忍手输小写/首尾空格
+    const roomId = String(data?.roomId ?? '').trim().toUpperCase().slice(0, 8)
+    if (!roomId) {
+      client.send(JSON.stringify({ event: 'room:joined', data: { ok: false, error: 'room_id_required' } }))
+      return { ok: false, error: 'room_id_required' }
+    }
+    const res = await this.roomService.joinRoom(roomId, playerId, name, client)
+    client.send(JSON.stringify({ event: 'room:joined', data: res }))
+    return { ok: true }
+  }
+
+  /** 房主开始对局 */
+  @SubscribeMessage('room:start')
+  async onRoomStart(
+    client: WebSocket,
+    data: { roomId?: string; token?: string; playerId?: string },
+  ) {
+    const user = await this.auth.verifyTokenOrNull(data?.token)
+    const playerId = user?.id ?? String(data?.playerId ?? '').slice(0, 64)
+    if (!playerId) return { ok: false, error: 'unauthorized' }
+    const roomId = String(data?.roomId ?? '').trim().toUpperCase().slice(0, 8)
+    const res = await this.roomService.startGame(roomId, playerId)
+    client.send(JSON.stringify({ event: 'room:started', data: res }))
+    return { ok: true }
+  }
+
+  /** 房主转让所有权给蓝方坐席玩家 */
+  @SubscribeMessage('room:host:transfer')
+  async onRoomHostTransfer(
+    client: WebSocket,
+    data: { roomId?: string; token?: string; playerId?: string },
+  ) {
+    const user = await this.auth.verifyTokenOrNull(data?.token)
+    const playerId = user?.id ?? String(data?.playerId ?? '').slice(0, 64)
+    if (!playerId) return { ok: false, error: 'unauthorized' }
+    const roomId = String(data?.roomId ?? '').trim().toUpperCase().slice(0, 8)
+    const res = this.roomService.transferHost(roomId, playerId)
+    client.send(JSON.stringify({ event: 'room:transferred', data: res }))
+    return { ok: true }
+  }
+
+  @SubscribeMessage('room:leave')
+  onRoomLeave(client: WebSocket) {
+    this.roomService.leaveRoom(client)
+    return { ok: true }
+  }
+}

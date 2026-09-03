@@ -1,0 +1,121 @@
+# AnimalTicTacToe CI：单测 + 构建 + 部署验收
+#
+# 触发：push 到 main / 任意 PR
+# 三个 job 并行：
+#   server-test    → 服务端单测（vitest）+ 启动服务端跑根目录 acceptance.mjs 验收（直连后端模式）
+#   client-test    → 客户端单测（vitest）
+#   client-build   → Taro H5 生产构建（验证同源化配置可编译，产物含 wss 自适应分支）
+#
+# 本地等价命令（server 目录）：
+#   pnpm install --frozen-lockfile && pnpm exec prisma generate && pnpm build
+#   DATABASE_URL="file:./ci.db" pnpm exec prisma db push --skip-generate
+#   DATABASE_URL="file:./ci.db" ADMIN_TOKEN=ci-token-0123456789abcdef node dist/main.js &
+#   node ../acceptance.mjs http://localhost:3000
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  server-test:
+    name: 服务端单测 + 验收
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 启用 pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 生成 Prisma 客户端
+        run: pnpm exec prisma generate
+
+      - name: 构建
+        run: pnpm build
+
+      - name: 单元测试
+        run: pnpm test
+
+      - name: 初始化 CI 数据库
+        run: pnpm exec prisma db push --skip-generate
+        env:
+          DATABASE_URL: file:./ci.db
+
+      - name: 启动服务端
+        run: |
+          node dist/main.js &
+          for i in $(seq 1 45); do
+            if curl -sf http://localhost:3000/game/stats/ci-ready-check > /dev/null; then
+              echo "server ready after ${i} probes"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "server failed to become ready in 90s"
+          exit 1
+        env:
+          DATABASE_URL: file:./ci.db
+          ADMIN_TOKEN: ci-token-0123456789abcdef
+          PORT: 3000
+
+      - name: 部署验收（acceptance.mjs 直连后端模式）
+        run: node ../acceptance.mjs http://localhost:3000
+
+  client-test:
+    name: 客户端单测
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 启用 pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 单元测试
+        run: pnpm test
+
+  client-build:
+    name: H5 生产构建
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: 启用 pnpm
+        run: corepack enable && corepack prepare pnpm@10 --activate
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 构建 H5
+        run: pnpm build:h5
+        env:
+          # Taro webpack 构建较吃内存（与 client/Dockerfile 一致）
+          NODE_OPTIONS: --max-old-space-size=4096

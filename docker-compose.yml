@@ -1,0 +1,72 @@
+# AnimalTicTacToe 一键部署
+#
+# 用法（服务器上需已安装 Docker）：
+#   cp .env.docker.example .env   # 修改 ADMIN_TOKEN
+#   docker compose up -d --build
+#
+# 端口：
+#   80 → 唯一公网入口：H5 客户端 + 同源反代的后端
+#        （nginx 静态托管 + /ws /uploads /auth /pieces /game /admin 转发到 server 容器，
+#         见 client/nginx.conf；客户端按同源相对地址访问，见 client/src/config.ts）
+#   server 的 3000 端口不再对外暴露，仅在 compose 内网被 web 反代访问。
+#   套 HTTPS 时在外层加证书反代或 Cloudflare Tunnel 指向 80 即可，客户端自动切换 wss。
+#
+# 数据（docker volume，重启不丢）：
+#   server_data    → SQLite 数据库（用户/棋子卡/审核数据）
+#   server_uploads → UGC 上传图片
+
+services:
+  server:
+    build: ./server
+    container_name: att-server
+    environment:
+      DATABASE_URL: file:/app/data/app.db
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?请在 .env 中设置 ADMIN_TOKEN（运营后台登录密钥）}
+      PORT: 3000
+    # 3000 不映射到宿主机：仅 compose 内网供 web 容器反代（expose 仅作声明）
+    expose:
+      - "3000"
+    volumes:
+      - server_data:/app/data
+      - server_uploads:/app/uploads
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/admin/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  web:
+    build: ./client
+    container_name: att-web
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+    restart: unless-stopped
+
+volumes:
+  server_data:
+  server_uploads:
+
+# ── PostgreSQL 迁移预留（切库时取消注释并同步修改）─────────────────
+# 当前 SQLite 已满足线上需求（数据量小、单实例）。切 PostgreSQL 步骤：
+#   1. prisma/schema.prisma 的 provider 改为 postgresql
+#   2. server/Dockerfile 删去 SQLite 相关说明，DATABASE_URL 改用连接串
+#   3. 启动命令 prisma db push 换成 prisma migrate deploy（先补 migrations）
+#
+#  postgres:
+#    image: postgres:16-alpine
+#    container_name: att-postgres
+#    environment:
+#      POSTGRES_USER: att
+#      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+#      POSTGRES_DB: att
+#    volumes:
+#      - pg_data:/var/lib/postgresql/data
+#    restart: unless-stopped
+#    # 生产建议不加 ports，仅容器网络内访问
+#
+#  volumes 追加:
+#  pg_data:
