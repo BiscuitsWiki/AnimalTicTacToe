@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 对局管理：匹配队列 + 房间 + 服务端权威裁决 + 视角化广播。
  * P2.3：对局结果/棋谱持久化（SQLite）+ 断线宽限期重连。
  */
@@ -9,6 +9,7 @@ import { PieceService } from '../piece/piece.service.js'
 import {
   createMatch, opponent, place, shuffle,
 } from './core/engine.js'
+import { freshDeck } from './core/pieces.js'
 import type { MatchState, PlaceEvent, Piece, Side } from './core/types.js'
 import { DECK_SIZE } from './core/types.js'
 import type { Element } from './core/elements.js'
@@ -440,18 +441,16 @@ export class MatchService {
     this.push(player.socket, 'game:state', view)
   }
 
-  /** 组牌：公共池随机 36 张（互不相同）；池子不足时允许重复补齐（开发期简化） */
+  /** 组牌：与客户端 deckSource 语义一致——工坊审核池 ≥36 张时随机取 36 张；不足时整副回退预设牌（36 张属性齐全），绝不出现占位卡 */
   private async buildDeck() {
     const approved = await this.pieceService.listApproved(500)
     const pieces = approved.map(p => ({
       id: p.id, name: p.name, element: p.element as Element,
     }))
-    const pool: typeof pieces = []
-    while (pool.length < DECK_SIZE) {
-      const take = pieces.slice(0, DECK_SIZE - pool.length)
-      pool.push(...(take.length > 0 ? take : [{ id: 'sys', name: '神秘棋子', element: 'normal' as Element }]))
+    if (pieces.length >= DECK_SIZE) {
+      return shuffle(pieces).slice(0, DECK_SIZE) as Piece[]
     }
-    return shuffle(pool)
+    return freshDeck()
   }
 
   private push(socket: ClientSocket | null, event: string, data: unknown): void {
