@@ -204,6 +204,7 @@ Cloudflare 仪表盘 → Zero Trust → Networks → Tunnels 创建隧道，指�
 | 症状                                | 原因与处理                                                                                |
 | --------------------------------- | ------------------------------------------------------------------------------------ |
 | web 构建报 `Cannot find module '@tarojs/binding-linux-x64-musl'` | Taro 4.2.1 未发布 musl 原生绑定，构建镜像不能用 alpine——client/Dockerfile 构建阶段已用 node:22-bookworm-slim（glibc），保持即可 |
+| att-web 卡在 Created / 日志报 `bind: address already in use` | 宿主机 80 被预装服务占用（`sudo ss -tlnp` 查看，常见为模板机预装的 Caddy/nginx）。处理：停用占用服务，或在 `.env` 设 `WEB_PORT=8080` 换端口（防火墙放行 8080）后 `docker compose -p att up -d` |
 | `docker compose ps` 里 server 反复重启 | `docker compose logs server` 看报错；多为 `.env` 缺 `ADMIN_TOKEN`（compose 会直接报错提示）          |
 | 首页打不开（超时）                         | 云厂商安全组/防火墙没放行 80；服务器内 `ufw status` 也检查一下                                             |
 | 首页能开，联机匹配转圈                       | `/ws` 反代异常，跑验收脚本看 WS 两项；确认 nginx.conf 已随镜像更新（旧镜像重新 build）                            |

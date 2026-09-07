@@ -43,7 +43,8 @@ services:
     depends_on:
       - server
     ports:
-      - "80:80"
+      # 宿主机端口可用 .env 的 WEB_PORT 覆盖（默认 80）
+      - "${WEB_PORT:-80}:80"
     restart: unless-stopped
 
 volumes:
