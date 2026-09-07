@@ -130,6 +130,8 @@
 
 * 部署后续待办：域名 + HTTPS（外层反代或 Tunnel，客户端已就绪）、域名白名单（小程序 request/ws 合法域名）、PostgreSQL 切库（schema provider 迁移 + migrations）、数据落库扩展（房间/对局持久化）。
 
+* 公网部署上线（2026-09-08）：腾讯云轻量（上海，Ubuntu 24.04，ubuntu 用户 SSH+密码），入口 http://182.254.221.57:8080/ 。完整部署模式验收 14/14 通过（H5/静态缓存/后台/登录/工坊/战绩/历史/上传/uploads/安全头/WS 匹配/WS 房间/3000 收敛）。部署实况：宿主机预装 Caddy 占 80 → .env 设 WEB_PORT=8080 绕开（compose ports 参数化）；代码以 git archive 打包 scp 上传（私有仓库免 token）。上线版本 f88fb23+（含 bookworm-slim 构建修复）。
+
 * 正式发布前：token 明文存储换 JWT + 过期时间、图片上传换对象存储、微信 imgSecCheck 内容初审接入。
 
 * 远期：Steam 版（Tauri 打包 Web 版 + Steamworks SDK 接入成就/好友邀请）。
