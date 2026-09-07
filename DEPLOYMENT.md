@@ -4,21 +4,21 @@
 > 形态：Docker Compose 单机部署——web 容器（nginx，唯一公网入口 80 端口）+ server 容器（NestJS + SQLite，仅内网）。
 > 全流程照抄命令即可，无需改动任何代码。
 
----
+***
 
 ## 一、服务器选购
 
-| 项 | 建议 |
-|---|---|
-| 厂商 | 阿里云 / 腾讯云轻量应用服务器（新用户活动价很低） |
+| 项  | 建议                                                      |
+| -- | ------------------------------------------------------- |
+| 厂商 | 阿里云 / 腾讯云轻量应用服务器（新用户活动价很低）                              |
 | 配置 | **2核 4G 起步**（client 的 Taro 构建吃内存；2G 会 OOM，可本地构建后只传产物规避） |
-| 系统 | Ubuntu 22.04 / Debian 12（本文命令按 Ubuntu 写） |
-| 地域 | 只发国内好友 → 国内节点（用域名必须 ICP 备案）；不想备案 → 香港/新加坡节点（延迟略高但免备案） |
-| 带宽 | 轻量套餐自带 4-6Mbps 足够（游戏流量极小，仅图片上传吃带宽） |
+| 系统 | Ubuntu 22.04 / Debian 12（本文命令按 Ubuntu 写）                |
+| 地域 | 只发国内好友 → 国内节点（用域名必须 ICP 备案）；不想备案 → 香港/新加坡节点（延迟略高但免备案）   |
+| 带宽 | 轻量套餐自带 4-6Mbps 足够（游戏流量极小，仅图片上传吃带宽）                      |
 
 **只需放行一个端口：80（HTTP）。** 3000 不放行（compose 已收敛为内网）。
 
----
+***
 
 ## 二、服务器初始化（装 Docker）
 
@@ -37,6 +37,7 @@ docker compose version    # 期望 v2.x
 ```
 
 > 国内服务器若拉取镜像慢，配置镜像加速器：
+>
 > ```bash
 > mkdir -p /etc/docker && cat > /etc/docker/daemon.json <<'EOF'
 > { "registry-mirrors": ["https://docker.m.daocloud.io"] }
@@ -44,28 +45,17 @@ docker compose version    # 期望 v2.x
 > systemctl restart docker
 > ```
 
----
+***
 
 ## 三、上传代码
 
 任选一种：
 
-**方式 A：Git（推荐，后续更新方便）**
-
-```bash
-# 本地（Windows PowerShell）推送到 GitHub/Gitee 后，服务器上：
-apt install -y git
-git clone https://github.com/<你的用户名>/AnimalTicTacToe.git /opt/att
-cd /opt/att
-```
-
-**方式 B：直接打包上传（不依赖 git 托管）**
+**方式 A：本地打包上传（推荐——私有仓库免配置 token，且不依赖服务器访问 GitHub）**
 
 ```powershell
-# 本地 PowerShell（项目根目录执行）：
-tar --exclude=node_modules --exclude=client/dist --exclude=server/dist `
-    --exclude=.env --exclude="*.db" --exclude=server/uploads `
-    -czf att.tar.gz .
+# 本地 PowerShell（项目根目录执行）：导出最近一次提交的内容为压缩包
+git archive --format=tar.gz -o att.tar.gz HEAD
 scp att.tar.gz root@<服务器IP>:/opt/
 ```
 
@@ -74,7 +64,15 @@ scp att.tar.gz root@<服务器IP>:/opt/
 mkdir -p /opt/att && tar -xzf /opt/att.tar.gz -C /opt/att && cd /opt/att
 ```
 
----
+**方式 B：Git 克隆（仓库公开、或 URL 中带 PAT 时方便，更新只需 git pull）**
+
+```bash
+apt install -y git
+git clone https://github.com/<你的用户名>/AnimalTicTacToe.git /opt/att
+cd /opt/att
+```
+
+***
 
 ## 四、首次部署（3 条命令）
 
@@ -96,7 +94,7 @@ docker compose -p att logs -f server  # Ctrl+C 退出日志
 
 看到 `att-server` 与 `att-web` 都在运行后，浏览器访问 `http://<服务器IP>/` —— 能进主菜单即部署成功。
 
----
+***
 
 ## 五、自动化验收（必做一次）
 
@@ -117,16 +115,22 @@ docker run --rm --network host -v /opt/att:/app -w /app node:22-alpine \
 
 若有 FAIL 项，按提示排查（常见原因见第八节）。全过后，把 `http://<服务器IP>/` 发给好友即可。
 
----
+***
 
 ## 六、日常运维
 
 ### 更新版本
 
+```powershell
+# 本地（项目根目录）：提交改动后导出并上传
+git archive --format=tar.gz -o att.tar.gz HEAD
+scp att.tar.gz root@<服务器IP>:/opt/
+```
+
 ```bash
-cd /opt/att
-git pull                                # 方式 B 上传的则重新 tar + 解压覆盖
-docker compose -p att up -d --build     # 重建（数据在卷里，不会丢）
+# 服务器：覆盖解压并重建（数据在卷里，不会丢；方式 B 克隆的则改为 git pull）
+cd /opt/att && tar -xzf /opt/att.tar.gz -C /opt/att
+docker compose -p att up -d --build
 ```
 
 ### 数据备份（建议加 cron）
@@ -155,19 +159,19 @@ docker compose -p att up -d
 
 ### 常用命令速查
 
-| 目的 | 命令 |
-|---|---|
-| 看日志 | `docker compose -p att logs -f server` / `... logs -f web` |
-| 重启 | `docker compose -p att restart` |
-| 停服 | `docker compose -p att down`（数据保留） |
-| 查数据卷 | `docker volume ls` |
+| 目的   | 命令                                                         |
+| ---- | ---------------------------------------------------------- |
+| 看日志  | `docker compose -p att logs -f server` / `... logs -f web` |
+| 重启   | `docker compose -p att restart`                            |
+| 停服   | `docker compose -p att down`（数据保留）                         |
+| 查数据卷 | `docker volume ls`                                         |
 
 ### 运营后台
 
 浏览器访问 `http://<服务器IP>/admin/`，登录密钥 = `.env` 里的 `ADMIN_TOKEN`。
 可审核 UGC 棋子卡、处理举报。**该地址与密钥不要外泄。**
 
----
+***
 
 ## 七、可选：域名 + HTTPS（发微信前的建议）
 
@@ -193,22 +197,23 @@ Cloudflare 仪表盘 → Zero Trust → Networks → Tunnels 创建隧道，指�
 
 配置后用验收脚本复测：`node acceptance.mjs https://你的域名.com`
 
----
+***
 
 ## 八、故障排查
 
-| 症状 | 原因与处理 |
-|---|---|
-| `docker compose ps` 里 server 反复重启 | `docker compose logs server` 看报错；多为 `.env` 缺 `ADMIN_TOKEN`（compose 会直接报错提示） |
-| 首页打不开（超时） | 云厂商安全组/防火墙没放行 80；服务器内 `ufw status` 也检查一下 |
-| 首页能开，联机匹配转圈 | `/ws` 反代异常，跑验收脚本看 WS 两项；确认 nginx.conf 已随镜像更新（旧镜像重新 build） |
-| 工坊图片上传报错 | 看 `docker compose logs server`；3MB 以上文件会被 nginx 拦（client_max_body_size 3m） |
-| 工坊图片显示 404 | `/uploads` 反代被静态规则截走 → 确认 nginx.conf 用的是 `^~` 前缀匹配的版本 |
-| 验收提示 3000 端口可达 | compose 的 server 服务被加了 ports 映射，删掉只留 expose，`docker compose up -d` 重建 |
-| 构建时 client 阶段 OOM 被杀 | 内存不足 4G；或改用「本地构建产物」方式：本地 `pnpm build:h5` 后把 client/dist 传上去，用只含 nginx 阶段的 Dockerfile |
-| 微信内打开链接提示非安全 | 未套 HTTPS，见第七节 |
+| 症状                                | 原因与处理                                                                                |
+| --------------------------------- | ------------------------------------------------------------------------------------ |
+| web 构建报 `Cannot find module '@tarojs/binding-linux-x64-musl'` | Taro 4.2.1 未发布 musl 原生绑定，构建镜像不能用 alpine——client/Dockerfile 构建阶段已用 node:22-bookworm-slim（glibc），保持即可 |
+| `docker compose ps` 里 server 反复重启 | `docker compose logs server` 看报错；多为 `.env` 缺 `ADMIN_TOKEN`（compose 会直接报错提示）          |
+| 首页打不开（超时）                         | 云厂商安全组/防火墙没放行 80；服务器内 `ufw status` 也检查一下                                             |
+| 首页能开，联机匹配转圈                       | `/ws` 反代异常，跑验收脚本看 WS 两项；确认 nginx.conf 已随镜像更新（旧镜像重新 build）                            |
+| 工坊图片上传报错                          | 看 `docker compose logs server`；3MB 以上文件会被 nginx 拦（client\_max\_body\_size 3m）        |
+| 工坊图片显示 404                        | `/uploads` 反代被静态规则截走 → 确认 nginx.conf 用的是 `^~` 前缀匹配的版本                                |
+| 验收提示 3000 端口可达                    | compose 的 server 服务被加了 ports 映射，删掉只留 expose，`docker compose up -d` 重建                |
+| 构建时 client 阶段 OOM 被杀              | 内存不足 4G；或改用「本地构建产物」方式：本地 `pnpm build:h5` 后把 client/dist 传上去，用只含 nginx 阶段的 Dockerfile |
+| 微信内打开链接提示非安全                      | 未套 HTTPS，见第七节                                                                        |
 
----
+***
 
 ## 九、架构速览（排障时的心智模型）
 
@@ -227,6 +232,10 @@ Cloudflare 仪表盘 → Zero Trust → Networks → Tunnels 创建隧道，指�
 ```
 
 - 客户端地址逻辑：[client/src/config.ts](client/src/config.ts) —— 生产同源（API 相对路径 + ws/wss 自适应）
+
 - 反代规则：[client/nginx.conf](client/nginx.conf)
+
 - 编排定义：[docker-compose.yml](docker-compose.yml)
+
 - 验收脚本：[acceptance.mjs](acceptance.mjs)
+

@@ -1,5 +1,8 @@
 # AnimalTicTacToe H5 客户端镜像：构建阶段（Taro H5）+ 运行阶段（nginx）
-FROM node:22-alpine AS builder
+# 构建阶段必须用 glibc（Debian）：Taro 4.2.1 的原生绑定 @tarojs/binding 只发布
+# darwin/win32/linux-gnu 变体，无 musl（linux-x64-musl），alpine 上会报
+# "Cannot find module '@tarojs/binding-linux-x64-musl'"。运行阶段仅托管静态文件，仍用 alpine。
+FROM node:22-bookworm-slim AS builder
 
 RUN corepack enable && corepack prepare pnpm@10 --activate
 

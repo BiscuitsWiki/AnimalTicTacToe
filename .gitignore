@@ -5,6 +5,9 @@ server/dist/
 *.log
 *.tsbuildinfo
 
+# 服务器部署包
+*.tar.gz
+
 # 环境与密钥
 .env
 .env.local
