@@ -4,6 +4,7 @@ import Taro from '@tarojs/taro'
 import { ELEMENTS, ELEMENT_COLORS, ELEMENT_NAMES_ZH } from '../../core/elements'
 import type { Element } from '../../core/elements'
 import { API_BASE, getJSON, postJSON, uploadImage } from '../../services/api'
+import { ensureLogin } from '../../services/auth'
 import './index.scss'
 
 interface MyPiece {
@@ -40,7 +41,12 @@ export default function Workshop () {
     }
   }
 
-  useEffect(() => { loadMine() }, [])
+  useEffect(() => {
+    void (async () => {
+      await ensureLogin()
+      await loadMine()
+    })()
+  }, [])
 
   const chooseImage = async () => {
     const res = await Taro.chooseImage({ count: 1, sizeType: ['compressed'] })
@@ -52,11 +58,9 @@ export default function Workshop () {
       setImageUrl(url)
       Taro.showToast({ title: '图片已上传', icon: 'success' })
     } catch (e) {
-      Taro.showToast({ title: '上传失败，请确认后端已启动', icon: 'none' })
+      Taro.showToast({ title: (e as Error).message || '上传失败，请重试', icon: 'none' })
       setImagePath('')
       setImageUrl('')
-      setServerDown(true)
-      void e
     } finally {
       setUploading(false)
     }

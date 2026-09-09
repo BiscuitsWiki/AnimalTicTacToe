@@ -1,4 +1,4 @@
-﻿/**
+/**
  * HTTP 请求封装（Taro.request 薄包装）。
  * 开发期后端跑在本机 NestJS（默认 3000 端口）。
  * 小程序真机调试时需改为局域网 IP（localhost 指向手机自身）。
@@ -39,18 +39,93 @@ export async function postJSON<T>(path: string, data: unknown): Promise<T> {
   return res.data as T
 }
 
-/** 上传图片（multipart），返回 { url } */
+/** 上传图片（multipart），返回 { url }；H5 端自动压缩，避免手机原图超出 2MB 限制 */
 export async function uploadImage(filePath: string): Promise<{ url: string }> {
+  if (process.env.TARO_ENV === 'h5') {
+    return uploadImageH5(filePath)
+  }
   const res = await Taro.uploadFile({
     url: `${API_BASE}/pieces/image`,
     filePath,
     name: 'file',
     header: authHeader(),
   })
+  if (res.statusCode === 413) throw new Error('图片过大（上限 2MB）')
   if (res.statusCode >= 400) {
-    throw new Error(`图片上传失败 -> ${res.statusCode}`)
+    throw new Error(`图片上传失败（${res.statusCode}）`)
   }
   return JSON.parse(res.data) as { url: string }
+}
+
+/** H5：超过 1MB 才触发压缩；最长边压到该像素上限 */
+const UPLOAD_TRIGGER_BYTES = 1024 * 1024
+const UPLOAD_MAX_EDGE = 1024
+
+/** H5 端：压缩后用 fetch + FormData 直传（同源无 CORS 问题，dev 跨端口已开 CORS） */
+async function uploadImageH5(src: string): Promise<{ url: string }> {
+  let blob: Blob
+  try {
+    blob = await (await fetch(src)).blob()
+  } catch {
+    throw new Error('无法读取所选图片，请重试')
+  }
+  if (blob.size > UPLOAD_TRIGGER_BYTES) {
+    const compressed = await compressH5(src, UPLOAD_MAX_EDGE)
+    if (compressed && compressed.size < blob.size) blob = compressed
+  }
+  if (blob.size > 2 * 1024 * 1024) throw new Error('图片过大（上限 2MB），请更换较小的图片')
+  const ext = blob.type.includes('webp') ? 'webp' : blob.type.includes('png') ? 'png' : 'jpg'
+  const fd = new FormData()
+  fd.append('file', blob, `piece.${ext}`)
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}/pieces/image`, {
+      method: 'POST',
+      headers: authHeader(),
+      body: fd,
+    })
+  } catch {
+    throw new Error('无法连接服务器，请检查网络')
+  }
+  if (res.status === 413) throw new Error('图片过大（上限 2MB），请更换较小的图片')
+  if (!res.ok) {
+    const msg = (await res.json().catch(() => null) as { message?: string } | null)?.message
+    throw new Error(msg ?? `图片上传失败（${res.status}）`)
+  }
+  return res.json() as Promise<{ url: string }>
+}
+
+/** H5 canvas 压缩：webp 优先（保留透明底），浏览器不支持 webp 时退白底 jpeg */
+function compressH5(src: string, maxEdge: number): Promise<Blob | null> {
+  return new Promise(resolve => {
+    const img = new Image()
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxEdge / Math.max(img.width, img.height))
+        const w = Math.max(1, Math.round(img.width * scale))
+        const h = Math.max(1, Math.round(img.height * scale))
+        const canvas = document.createElement('canvas')
+        canvas.width = w
+        canvas.height = h
+        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h)
+        canvas.toBlob(b => {
+          if (b && b.type === 'image/webp') return resolve(b)
+          const c2 = document.createElement('canvas')
+          c2.width = w
+          c2.height = h
+          const ctx = c2.getContext('2d')!
+          ctx.fillStyle = '#fff'
+          ctx.fillRect(0, 0, w, h)
+          ctx.drawImage(img, 0, 0, w, h)
+          c2.toBlob(jb => resolve(jb), 'image/jpeg', 0.85)
+        }, 'image/webp', 0.85)
+      } catch {
+        resolve(null)
+      }
+    }
+    img.onerror = () => resolve(null)
+    img.src = src
+  })
 }
 
 /** 公共池（审核通过的棋子） */
