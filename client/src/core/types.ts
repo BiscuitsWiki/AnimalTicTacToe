@@ -60,14 +60,19 @@ export interface MatchState {
   turnSide: Side
   /** 双方最近一次落子格（下标），null = 尚未落子；公开信息用于棋盘高亮 */
   lastPlaced: Record<Side, number | null>
+  /** 最近一手若为跳过则记录其执行方；用于双方连续跳过判平（both_skip），落子会重置为 null */
+  lastSkipped: Side | null
   pendingWin: PendingWin | null
   result: MatchResult | null
 }
 
 export interface MatchResult {
   winner: Side | 'draw'
-  /** line = 三连获胜；board_full = 棋盘下满平局；no_moves = 行动方无处可落；resign = 认输；opponent_disconnect = 对手超时未归 */
-  reason: 'line' | 'board_full' | 'no_moves' | 'resign' | 'opponent_disconnect'
+  /**
+   * line = 三连获胜；board_full = 棋盘全部格子叠满 8 层且无三连平局；both_skip = 双方连续跳过平局；
+   * resign = 认输；opponent_disconnect = 对手超时未归
+   */
+  reason: 'line' | 'board_full' | 'both_skip' | 'resign' | 'opponent_disconnect'
 }
 
 /** 一次落子结算产生的事件序列（客户端据此驱动提示与动画） */
@@ -84,6 +89,8 @@ export type PlaceEvent =
    * 双方首个行动回合发起始 3 张，之后每回合抽 1 张；牌堆为空时不产生该事件。
    */
   | { type: 'dealt'; side: Side; pieces: Piece[] }
+  /** side 跳过本回合（不落子，正常换边抽牌）；待胜期守方跳过 = 未阻断 */
+  | { type: 'skipped'; side: Side }
 
 /** 规则错误码 */
 export type RuleErrorCode =

@@ -1,13 +1,14 @@
 /**
  * 规则引擎单元测试（vitest）。
  * 覆盖：克制表、回合抽牌（起始 3 张 + 每回合 1 张、不重洗）、落子与叠放（上限 8 层）、
- * 待胜阻断、平局（board_full / no_moves）、认输。
+ * 待胜阻断、跳过（换边抽牌 / 连续跳过平局 / 待胜期跳过判负）、
+ * 平局（board_full 叠满 / both_skip 连续跳过）、认输。
  */
 import { describe, expect, it } from 'vitest'
 import { canCapture, effectiveness } from '../elements'
 import {
   canPlace, cloneState, createMatch, dealCountFor, hasAnyLegalPlacement,
-  legalCells, linesOf, place, resign, shuffle, topSide,
+  legalCells, linesOf, place, resign, shuffle, skip, topSide,
 } from '../engine'
 import type { MatchState, Piece, Side } from '../types'
 
@@ -35,6 +36,7 @@ function makeState(
     turnCount: opts.turnCount ?? 1,
     turnSide: opts.turnSide ?? 'red',
     lastPlaced: { red: null, blue: null },
+    lastSkipped: null,
     pendingWin: null,
     result: null,
   }
@@ -295,7 +297,7 @@ describe('待胜阻断', () => {
     expect(s.result?.reason).toBe('line')
   })
 
-  it('棋盘下满且阻断方无合法落子 → 三连方直接获胜', () => {
+  it('棋盘下满且阻断方无合法落子：不自动判胜，须跳过（跳过 = 未阻断）→ 三连方获胜', () => {
     // 终局盘面：red fire 占 0,1,2(三连),3,7；blue water 占 4,5,6,8；
     // blue 手牌只剩 fire（对 red fire 不克制，blue 格又不可自叠）→ 无处可落
     const s = makeState(
@@ -313,14 +315,42 @@ describe('待胜阻断', () => {
     }
     const ev = place(s, 'red', 0, 2)     // 第 9 子：red 三连 + 棋盘下满
     expect(ev.some(e => e.type === 'pending_win' && e.side === 'red')).toBe(true)
-    expect(ev.some(e => e.type === 'win' && e.winner === 'red')).toBe(true)
-    expect(s.board.every(c => c.stack.length > 0)).toBe(true)
+    expect(s.result).toBeNull()          // 不再自动判终局：blue 须自行处置
+    expect(hasAnyLegalPlacement(s, 'blue')).toBe(false)
+    const ev2 = skip(s, 'blue')          // blue 无处可落只能跳过 = 放弃阻断
+    expect(ev2.some(e => e.type === 'win' && e.winner === 'red')).toBe(true)
     expect(s.result?.winner).toBe('red')
+    expect(s.result?.reason).toBe('line')
   })
 })
 
 describe('平局判定', () => {
-  it('棋盘下满且无三连 → 平局', () => {
+  it('棋盘九格全部叠满 8 层且无三连 → 平局（board_full）', () => {
+    const s = makeState(['fire'], ['water'], [])
+    /** 构造 n 层叠放（顶层归属 top，其余层交替；棋子内容只需保证最上层可被克制） */
+    const stack = (top: Side, n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        side: (i === n - 1 ? top : top === 'red' ? 'blue' : 'red') as Side,
+        piece: P(`s_${top}_${n}_${i}`, 'normal'),
+      }))
+    // 8 格已叠满 8 层，顶层 R:{0,2,4,7} B:{1,3,6,8}（叠放前后均无三连）；
+    // 5 格 7 层顶层 blue grass，待 red fire 叠满第 8 层
+    const full: Array<[number, Side]> = [
+      [0, 'red'], [1, 'blue'], [2, 'red'], [3, 'blue'],
+      [4, 'red'], [6, 'blue'], [7, 'red'], [8, 'blue'],
+    ]
+    for (const [i, top] of full) s.board[i].stack = stack(top, 8)
+    s.board[5].stack = stack('blue', 7)
+    s.board[5].stack[6].piece = P('c5top', 'grass')   // 顶层 grass：fire 克制可叠
+    const ev = place(s, 'red', 0, 5)     // 叠满最后一格 → 全盘 8 层
+    expect(ev.some(e => e.type === 'draw')).toBe(true)
+    expect(s.result).toEqual({ winner: 'draw', reason: 'board_full' })
+    expect(s.board.every(c => c.stack.length >= 8)).toBe(true)
+    expect(linesOf(s.board, 'red')).toHaveLength(0)
+    expect(linesOf(s.board, 'blue')).toHaveLength(0)
+  })
+
+  it('棋盘下满但未叠满 → 不判平，对局继续；随后双方连续跳过 → 平局（both_skip）', () => {
     // 无三连的填满布局（normal 互不克制无法叠放，全部落在空格）：
     // 终盘 R:{0,2,4,5,7}  B:{1,3,6,8} —— 8 条线均无同色三连
     const s = makeState(
@@ -335,16 +365,20 @@ describe('平局判定', () => {
       place(s, side, 0, cell)
       expect(s.result).toBeNull()        // 中途不应终局
     }
-    const ev = place(s, 'red', 0, 7)     // 第 9 子填满棋盘
-    expect(ev.some(e => e.type === 'draw')).toBe(true)
-    expect(s.result).toEqual({ winner: 'draw', reason: 'board_full' })
-    expect(linesOf(s.board, 'red')).toHaveLength(0)
-    expect(linesOf(s.board, 'blue')).toHaveLength(0)
+    const ev = place(s, 'red', 0, 7)     // 第 9 子填满棋盘（每格仅 1 层）
+    expect(ev.some(e => e.type === 'draw')).toBe(false)   // 未叠满：不判平
+    expect(s.result).toBeNull()
+    expect(s.turnSide).toBe('blue')      // 对局继续
+    // 双方手牌耗尽无处可落 → 连续跳过 → both_skip 平局
+    skip(s, 'blue')
+    const ev2 = skip(s, 'red')
+    expect(ev2.some(e => e.type === 'draw')).toBe(true)
+    expect(s.result).toEqual({ winner: 'draw', reason: 'both_skip' })
   })
 
-  it('换边后行动方手牌用尽且牌堆为空 → 僵局平局（no_moves）', () => {
+  it('无处可落不再自动判平：行动方须跳过，双方连续跳过才平局', () => {
     // 8 格已占（无三连），red 叠放占领 6 格后棋盘仍未满；
-    // blue 手牌为空、牌堆为空 → 无处可落且无待胜 → 僵局平局
+    // blue 手牌为空、牌堆为空 → 无处可落且无待胜
     const s = makeState(['fire'], [], [])
     const L = (side: Side, el: Piece['element'], i: number) =>
       ({ side, piece: P(`${side}${i}_${el}`, el) })
@@ -357,8 +391,75 @@ describe('平局判定', () => {
     s.board[6].stack = [L('blue', 'grass', 6)]
     s.board[7].stack = [L('red', 'fire', 7)]
     const ev = place(s, 'red', 0, 6)     // fire 克制 grass，叠放 6 格
+    expect(ev.some(e => e.type === 'draw')).toBe(false)   // 不再自动判平
+    expect(s.result).toBeNull()
+    expect(s.turnSide).toBe('blue')      // blue 无处可落，须自行跳过
+    skip(s, 'blue')
+    const ev2 = skip(s, 'red')           // red 手牌也已用尽 → 跟着跳过 → 平局
+    expect(ev2.some(e => e.type === 'draw')).toBe(true)
+    expect(s.result).toEqual({ winner: 'draw', reason: 'both_skip' })
+  })
+})
+
+describe('跳过回合', () => {
+  it('跳过不消耗手牌，正常换边并由对手抽牌', () => {
+    const s = makeState(['fire'], ['water'], ['normal', 'normal', 'normal'])
+    const ev = skip(s, 'red')
+    expect(ev[0]).toEqual({ type: 'skipped', side: 'red' })
+    expect(s.turnSide).toBe('blue')
+    expect(s.turnCount).toBe(2)
+    expect(s.lastSkipped).toBe('red')
+    expect(s.hands.red).toHaveLength(1)          // 手牌不消耗
+    expect(s.hands.blue).toHaveLength(4)         // 原 1 张 + 首回合抽 3 张
+    const dealt = ev.find(e => e.type === 'dealt')
+    expect(dealt && dealt.type === 'dealt' ? dealt.pieces.length : 0).toBe(3)
+  })
+
+  it('双方连续跳过 → 平局（both_skip）', () => {
+    const s = makeState(['fire'], ['water'], [])
+    skip(s, 'red')
+    const ev = skip(s, 'blue')
     expect(ev.some(e => e.type === 'draw')).toBe(true)
-    expect(s.result).toEqual({ winner: 'draw', reason: 'no_moves' })
+    expect(s.phase).toBe('FINISHED')
+    expect(s.result).toEqual({ winner: 'draw', reason: 'both_skip' })
+  })
+
+  it('落子重置连续跳过：A跳过→B落子→A跳过→B跳过 才判平', () => {
+    const s = makeState(['fire', 'fire'], ['water', 'water'], [])
+    skip(s, 'red')            // red 跳过
+    place(s, 'blue', 0, 4)    // blue 落子 → 重置跳过计数
+    expect(s.lastSkipped).toBeNull()
+    expect(s.result).toBeNull()
+    skip(s, 'red')            // red 再跳过
+    expect(s.result).toBeNull()   // blue 未跟着跳过，游戏继续
+    skip(s, 'blue')           // blue 紧跟跳过 → 平局
+    expect(s.result).toEqual({ winner: 'draw', reason: 'both_skip' })
+  })
+
+  it('待胜期守方跳过 = 未阻断 → 三连方获胜', () => {
+    const s = makeState(
+      ['fire', 'fire', 'fire'], ['water', 'water', 'water'], [],
+    )
+    place(s, 'red', 0, 0)
+    place(s, 'blue', 0, 3)
+    place(s, 'red', 0, 1)
+    place(s, 'blue', 0, 4)
+    place(s, 'red', 0, 2)   // red 三连 0-1-2，轮 blue 阻断
+    const ev = skip(s, 'blue')
+    expect(ev.some(e => e.type === 'win' && e.winner === 'red')).toBe(true)
+    expect(s.result).toEqual({ winner: 'red', reason: 'line' })
+  })
+
+  it('非本回合不可跳过', () => {
+    const s = makeState(['fire'], ['water'])
+    expect(() => skip(s, 'blue')).toThrow(/NOT_YOUR_TURN/)
+  })
+
+  it('对局已结束不可跳过', () => {
+    const s = makeState(['fire'], ['water'])
+    skip(s, 'red')
+    skip(s, 'blue')          // both_skip 平局终局
+    expect(() => skip(s, 'red')).toThrow(/GAME_OVER/)
   })
 })
 

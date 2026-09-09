@@ -219,6 +219,24 @@
     line-height: 1.4;
   }
 
+  /* 对局中跳过按钮（状态栏右侧小胶囊，仅本回合行动时显示） */
+  &__skip {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 56px;
+    padding: 0 28px;
+    border-radius: 999px;
+    background: #f0eae0;
+    color: #6b6357;
+    font-size: 24px;
+
+    &:active {
+      opacity: 0.85;
+    }
+  }
+
   /* 对局中认输按钮（状态栏右侧小胶囊） */
   &__resign {
     flex-shrink: 0;
@@ -345,26 +363,36 @@
       box-shadow: 0 0 0 4px rgba(79, 123, 217, 0.25);
     }
 
-    /* 已选棋子的可落格：绿色加粗虚线（置于 last-* 之后，选中态优先） */
+    /* 已选棋子的可落格：绿虚线边框 + 内侧绿光晕（不覆盖底色，保留红/蓝阵营色；
+       置于 last-* 之后，选中态优先） */
     &--ok {
       border-color: #2e9e44;
       border-style: dashed;
       border-width: 6px;
-      background: #f2f9f0;
+      box-shadow: inset 0 0 16px rgba(46, 158, 68, 0.28);
 
       &:active {
-        background: #e2f2dd;
+        box-shadow: inset 0 0 16px rgba(46, 158, 68, 0.42);
       }
     }
 
-    /* 已选棋子的不可落格：浅灰蒙层 */
+    /* 已选棋子的不可落格：右下角灰×小徽章（不遮底色，阵营色完整可见） */
     &--blocked {
       &::after {
-        content: '';
+        content: '×';
         position: absolute;
-        inset: 0;
-        border-radius: 13px;
-        background: rgba(120, 116, 108, 0.38);
+        right: 8px;
+        bottom: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: rgba(120, 116, 108, 0.78);
+        color: #fff;
+        font-size: 26px;
+        line-height: 1;
         pointer-events: none;
         z-index: 3;
       }

@@ -5,11 +5,12 @@
  * 核心规则（见 ../docs 或架构文档 3.3）：
  * - 抽牌制：双方首个行动回合各发起始手牌 3 张，此后每次轮到行动时从牌堆抽 1 张；
  *   手牌跨回合保留（落 1 抽 1）；牌堆抽完即止，不重洗回牌堆
- * - 行动二选一：落在空格，或克制叠放在对方格上；每次行动只占据一格
+ * - 行动二选一：落在空格，或克制叠放在对方格上；每次行动只占据一格；
+ *   也可跳过本回合（不落子，正常换边抽牌）
  * - 叠放前置条件：① 目标格属对方 ② 叠放未满 8 层 ③ 行动棋子克制对方最上层
- * - 三连不立即获胜：进入待胜缓冲（pendingWin），对手一整回合内未能叠放打断 → 三连方获胜
- * - 换边后若行动方发牌后仍无任何合法落子：有待胜则待胜方获胜，否则僵局判平局（no_moves）
- * - 棋盘九格全部非空且无三连 → 平局
+ * - 三连不立即获胜：进入待胜缓冲（pendingWin），对手一整回合内未能叠放打断（跳过 = 未阻断）→ 三连方获胜
+ * - 平局判定（二选一即平）：① 棋盘九格全部叠满 8 层且无三连 ② 双方连续跳过（both_skip）；
+ *   任意一方落子则重置连续跳过计数，游戏继续
  */
 import { canCapture } from './elements.js'
 import {
@@ -62,6 +63,7 @@ export function createMatch({ deck }: CreateMatchOptions): MatchState {
     turnCount: 1,
     turnSide: 'red',
     lastPlaced: { red: null, blue: null },
+    lastSkipped: null,
     pendingWin: null,
     result: null,
   }
@@ -141,9 +143,9 @@ export function hasAnyLegalPlacement(state: MatchState, side: Side): boolean {
  * 1. 校验并落子（空格落子 / 克制叠放二选一）
  * 2. 若对手存在待胜：本次行动后其三连仍在 → 其获胜；被打断 → 清除待胜
  * 3. 我方成三连 → 置待胜缓冲
- * 4. 棋盘九格全部非空且无三连 → 平局
- * 5. 换边进入对手回合（自动抽牌）；对手抽牌后仍无任何合法落子 →
- *    有待胜则待胜方获胜，否则僵局平局（no_moves：手牌用尽或无处可叠）
+ * 4. 棋盘九格全部叠满 8 层且无三连 → 平局（board_full）
+ * 5. 换边进入对手回合（自动抽牌）；落子重置连续跳过计数。
+ *    对手若无合法落子，可主动跳过（见 skip），不再自动判平
  */
 export function place(
   state: MatchState, side: Side, handIdx: number, cellIdx: number,
@@ -170,8 +172,10 @@ export function place(
     cell.stack.push({ side, piece })                           // b. 克制叠放占领
   }
   hand.splice(handIdx, 1)
-  // 记录该方最近落子格（公开信息，棋盘高亮用）；手牌跨回合保留，下次行动回合开始再抽 1 张
+  // 记录该方最近落子格（公开信息，棋盘高亮用）；手牌跨回合保留，下次行动回合开始再抽 1 张；
+  // 落子重置连续跳过计数（任意一方继续下棋则游戏继续）
   state.lastPlaced[side] = cellIdx
+  state.lastSkipped = null
   events.push({ type: 'placed', side, cellIdx, piece, stacked })
 
   const opp = opponent(side)
@@ -206,8 +210,8 @@ export function place(
     events.push({ type: 'pending_win', side, line: myLines[0] })
   }
 
-  // 4. 平局：九格全部非空且双方均无三连
-  const boardFull = state.board.every(c => c.stack.length > 0)
+  // 4. 平局：九格全部叠满 8 层且双方均无三连
+  const boardFull = state.board.every(c => c.stack.length >= STACK_LIMIT)
   if (boardFull && myLines.length === 0 && linesOf(state.board, opp).length === 0) {
     state.phase = 'FINISHED'
     state.result = { winner: 'draw', reason: 'board_full' }
@@ -215,7 +219,7 @@ export function place(
     return events
   }
 
-  // 5. 换边：进入对手回合并自动抽牌
+  // 5. 换边：进入对手回合并自动抽牌（对手无合法落子时可主动跳过）
   state.turnSide = opp
   state.turnCount++
   state.phase = 'TURN_ACTION'
@@ -223,17 +227,46 @@ export function place(
   if (dealt.pieces.length > 0) {
     events.push({ type: 'dealt', side: opp, pieces: dealt.pieces })
   }
+  return events
+}
 
-  // 对手抽牌后仍无合法落子：待胜方直接获胜；否则僵局平局（no_moves）
-  if (!hasAnyLegalPlacement(state, opp)) {
+/**
+ * 跳过回合：本轮不落子，正常换边并由对手抽牌。
+ * - 待胜缓冲期守方跳过 = 放弃阻断 → 三连方直接获胜
+ * - 双方连续跳过（上一手也是跳过）→ 平局（both_skip）
+ * - 对局已结束时抛 GAME_OVER；非本回合抛 NOT_YOUR_TURN
+ */
+export function skip(state: MatchState, side: Side): PlaceEvent[] {
+  if (state.phase === 'FINISHED') throw new RuleError('GAME_OVER')
+  if (state.phase !== 'TURN_ACTION' || state.turnSide !== side) throw new RuleError('NOT_YOUR_TURN')
+
+  const events: PlaceEvent[] = [{ type: 'skipped', side }]
+  const opp = opponent(side)
+
+  // 1. 待胜期守方跳过 = 未阻断 → 三连方获胜
+  if (state.pendingWin && state.pendingWin.winnerSide === opp) {
     state.phase = 'FINISHED'
-    if (state.pendingWin && state.pendingWin.winnerSide === side) {
-      state.result = { winner: side, reason: 'line' }
-      events.push({ type: 'win', winner: side, line: state.pendingWin.line })
-    } else {
-      state.result = { winner: 'draw', reason: 'no_moves' }
-      events.push({ type: 'draw' })
-    }
+    state.result = { winner: opp, reason: 'line' }
+    events.push({ type: 'win', winner: opp, line: state.pendingWin.line })
+    return events
+  }
+
+  // 2. 双方连续跳过 → 平局
+  if (state.lastSkipped === opp) {
+    state.phase = 'FINISHED'
+    state.result = { winner: 'draw', reason: 'both_skip' }
+    events.push({ type: 'draw' })
+    return events
+  }
+
+  // 3. 正常跳过：记录跳过方，换边并给对手抽牌
+  state.lastSkipped = side
+  state.turnSide = opp
+  state.turnCount++
+  state.phase = 'TURN_ACTION'
+  const dealt = dealTo(state, opp)
+  if (dealt.pieces.length > 0) {
+    events.push({ type: 'dealt', side: opp, pieces: dealt.pieces })
   }
   return events
 }

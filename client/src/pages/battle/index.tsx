@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, View, Text } from '@tarojs/components'
 import Taro, { useShareAppMessage, useUnload } from '@tarojs/taro'
 import {
-  canPlace, cloneState, createMatch, legalCells, place, resign, sideNameZh, topSide,
+  canPlace, cloneState, createMatch, legalCells, place, resign, sideNameZh, skip, topSide,
 } from '../../core/engine'
 import { ELEMENT_COLORS, ELEMENT_NAMES_ZH } from '../../core/elements'
 import { aiChoosePlacement } from '../../core/ai'
@@ -62,6 +62,8 @@ function eventToText(e: PlaceEvent): string {
       return '对局结束，平局'
     case 'resigned':
       return `${sideNameZh(e.side)}认输，${sideNameZh(e.side === 'red' ? 'blue' : 'red')}获胜！`
+    case 'skipped':
+      return `${sideNameZh(e.side)}跳过了本回合`
   }
 }
 
@@ -490,13 +492,16 @@ export default function Battle () {
     return legalCells(match, mySide, piece)
   }, [match, selected, myTurn, mySide])
 
-  /** AI 回合（仅 ai 模式）：回合发牌制下直接行动 */
+  /** AI 回合（仅 ai 模式）：回合发牌制下直接行动；无合法落子时自动跳过 */
   useEffect(() => {
     if (mode !== 'ai' || !match || match.phase === 'FINISHED' || match.turnSide !== 'blue') return
     const timer = setTimeout(() => {
       const ns = cloneState(match)
       const { handIdx, cellIdx } = aiChoosePlacement(ns)
-      const events = place(ns, 'blue', handIdx, cellIdx)
+      // 引擎不再自动判平局：AI 无处可落时主动跳过（连续双方跳过由引擎判平）
+      const events = handIdx >= 0
+        ? place(ns, 'blue', handIdx, cellIdx)
+        : skip(ns, 'blue')
       setMatch(ns)
       setSelected(null)
       pushLog(events.map(eventToText))
@@ -519,6 +524,24 @@ export default function Battle () {
     }
     const ns = cloneState(match)
     const events = place(ns, mySide, selected, cellIdx)
+    setMatch(ns)
+    setSelected(null)
+    pushLog(events.map(eventToText))
+  }
+
+  /**
+   * 跳过回合：不出牌，正常换边抽牌。
+   * 人机本地结算；联机/房间发 game:skip 由服务端权威裁决。
+   */
+  const handleSkip = () => {
+    if (!match || !myTurn || match.phase !== 'TURN_ACTION') return
+    if (mode !== 'ai') {
+      pvpRef.current?.socket.send('game:skip', {})
+      setSelected(null)
+      return
+    }
+    const ns = cloneState(match)
+    const events = skip(ns, mySide)
     setMatch(ns)
     setSelected(null)
     pushLog(events.map(eventToText))
@@ -625,7 +648,7 @@ export default function Battle () {
       return match.result.winner === mySide ? '你赢了！' : '你输了'
     }
     if (match.turnSide !== mySide) return `${oppoName}思考中…`
-    return selected === null ? '你的回合：请选择手牌' : '请点击棋盘落子'
+    return selected === null ? '你的回合：选择手牌或跳过' : '请点击棋盘落子'
   }
 
   const pendingBanner = () => {
@@ -878,9 +901,14 @@ export default function Battle () {
         })}
       </View>
 
-      {/* 状态栏 + 认输入口 */}
+      {/* 状态栏 + 跳过/认输入口 */}
       <View className='battle__status'>
         <Text className='battle__status-text'>{statusText()}</Text>
+        {!match.result && !spectating && myTurn && (
+          <View className='battle__skip' onClick={handleSkip}>
+            <Text>跳过</Text>
+          </View>
+        )}
         {!match.result && !spectating && (
           <View className='battle__resign' onClick={() => setResignOpen(true)}>
             <Text>认输</Text>
@@ -991,11 +1019,11 @@ export default function Battle () {
                 ? '三连达成'
                 : match.result.reason === 'resign'
                   ? '认输'
-                  : match.result.reason === 'no_moves'
-                    ? '无处可落'
+                  : match.result.reason === 'both_skip'
+                    ? '双方连续跳过'
                     : match.result.reason === 'opponent_disconnect'
                       ? '对手断线未归'
-                      : '棋盘下满且无三连'}
+                      : '棋盘叠满且无三连'}
             </Text>
             <View className='btn btn--restart' onClick={restart}>
               <Text>

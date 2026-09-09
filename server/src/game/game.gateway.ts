@@ -78,6 +78,13 @@ export class GameGateway {
     return { ok: true }
   }
 
+  /** 跳过回合：本轮不落子，正常换边抽牌（待胜期守方跳过 = 未阻断） */
+  @SubscribeMessage('game:skip')
+  onSkip(client: WebSocket) {
+    this.matchService.applySkip(client)
+    return { ok: true }
+  }
+
   /** 认输：对局中玩家主动判负，对方获胜 */
   @SubscribeMessage('game:resign')
   onResign(client: WebSocket) {

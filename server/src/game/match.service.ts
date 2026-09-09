@@ -7,7 +7,7 @@ import type { WebSocket } from 'ws'
 import { PrismaService } from '../prisma.service.js'
 import { PieceService } from '../piece/piece.service.js'
 import {
-  createMatch, opponent, place, resign, shuffle,
+  createMatch, opponent, place, resign, shuffle, skip,
 } from './core/engine.js'
 import { freshDeck } from './core/pieces.js'
 import type { MatchResult, MatchState, PlaceEvent, Piece, Side } from './core/types.js'
@@ -38,7 +38,7 @@ export interface Spectator {
 interface ActionRecord {
   seq: number
   side: Side
-  type: 'place' | 'deal' | 'resign'
+  type: 'place' | 'deal' | 'skip' | 'resign'
   payload: Record<string, unknown>
 }
 
@@ -250,6 +250,33 @@ export class MatchService {
       }
     } catch {
       this.sendView(room, player, [])   // 非法落子：回推纠偏
+    }
+  }
+
+  /**
+   * 跳过指令：本轮不落子，正常换边抽牌。
+   * 待胜期守方跳过 = 未阻断（三连方获胜）；双方连续跳过 = 平局（both_skip）。
+   */
+  applySkip(socket: ClientSocket): void {
+    const room = this.roomOf(socket)
+    if (!room) return
+    const player = this.playerOf(room, socket)
+    if (!player || room.state.turnSide !== player.side) return
+    try {
+      const events = skip(room.state, player.side)
+      this.record(room, player.side, 'skip', {})
+      // 棋谱记录跳过后对手的自动抽牌
+      for (const e of events) {
+        if (e.type === 'dealt') {
+          this.record(room, e.side, 'deal', { count: e.pieces.length })
+        }
+      }
+      this.broadcast(room, events)
+      if (room.state.result) {
+        this.endMatch(room, room.state.result.winner, room.state.result.reason)
+      }
+    } catch {
+      this.sendView(room, player, [])   // 非法跳过（已终局等）：回推纠偏
     }
   }
 

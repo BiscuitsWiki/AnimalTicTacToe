@@ -27,7 +27,7 @@ export function aiChoosePlacement(state: MatchState): { handIdx: number; cellIdx
       }
     }
   }
-  // 引擎保证：对局未结束时行动方必有合法落子（棋盘未满则空格可落）
+  // 无合法落子时返回 handIdx=-1：调用方应改为跳过回合（连续双方跳过由引擎判平）
   return best
 }
 

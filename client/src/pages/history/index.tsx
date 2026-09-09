@@ -12,7 +12,9 @@ import './index.scss'
 /** 结束原因文案 */
 const reasonText = (r: string) =>
   r === 'line' ? '三连制胜' :
-  r === 'board_full' ? '棋盘下满' :
+  r === 'board_full' ? '棋盘叠满' :
+  r === 'both_skip' ? '双方连续跳过' :
+  r === 'no_moves' ? '无处可落' :
   r === 'opponent_disconnect' ? '对手超时未归' : r
 
 /** 相对时间：刚刚 / N 分钟前 / N 小时前 / M月D日 */
