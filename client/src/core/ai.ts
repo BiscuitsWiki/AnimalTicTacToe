@@ -7,6 +7,7 @@
 import {
   canPlace, cloneState, LINES, opponent, place, topSide,
 } from './engine'
+import { STACK_LIMIT } from './types'
 import type { MatchState, PlaceEvent, Side } from './types'
 
 const AI_SIDE: Side = 'blue'
@@ -80,9 +81,9 @@ function hasImmediateThreat(state: MatchState, side: Side): boolean {
     const target = line.find(i => topSide(state.board[i]) !== side)
     if (target === undefined) continue
     const cell = state.board[target]
-    // 空格必可落；对方格只要未满 3 层就存在被克制叠放的可能（保守估计）
+    // 空格必可落；对方格只要未达叠放上限就存在被克制叠放的可能（保守估计）
     if (cell.stack.length === 0) return true
-    if (cell.stack.length < 3 && topSide(cell) !== side) return true
+    if (cell.stack.length < STACK_LIMIT && topSide(cell) !== side) return true
   }
   return false
 }

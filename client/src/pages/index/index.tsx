@@ -3,8 +3,12 @@ import { View, Text, Input } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { fetchStats } from '../../services/api'
 import type { PlayerStats } from '../../services/api'
-import { ensureLogin } from '../../services/auth'
+import { ensureLogin, getToken, getUserId } from '../../services/auth'
+import { GameSocket } from '../../services/ws'
 import './index.scss'
+
+/** 会话级标记：仅本次会话首次进入主菜单时探测未完成对局（避免主动退出后被拉回） */
+let resumeProbed = false
 
 export default function Index () {
   const [stats, setStats] = useState<PlayerStats | null>(null)
@@ -24,8 +28,46 @@ export default function Index () {
     if (user) fetchStats(user.id).then(setStats).catch(() => {})
   }
 
+  /**
+   * 断线重连探测：断开后重新进入页面时，若有未完成的对局直接续玩；
+   * 若人在房间（未开局）则回到房间。仅会话首次进入时执行一次。
+   */
+  const probeUnfinished = async () => {
+    const user = await ensureLogin()
+    if (!user) return
+    const socket = new GameSocket()
+    try {
+      await socket.connect()
+    } catch {
+      return   // 服务不可达：静默跳过
+    }
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      socket.close()
+    }
+    socket.on('match:reconnected', () => {
+      finish()
+      Taro.navigateTo({ url: '/pages/battle/index?mode=pvp&resume=1' })
+    })
+    socket.on('match:reconnect', (d: { ok: boolean; inRoom?: string }) => {
+      if (d?.ok) return   // 成功由 match:reconnected 处理
+      finish()
+      if (d?.inRoom) {
+        Taro.navigateTo({ url: `/pages/battle/index?mode=room&role=join&room=${d.inRoom}` })
+      }
+    })
+    socket.send('match:reconnect', { token: getToken(), playerId: getUserId() })
+    setTimeout(finish, 8000)   // 无应答兜底
+  }
+
   useEffect(() => {
     refresh()
+    if (!resumeProbed) {
+      resumeProbed = true
+      probeUnfinished()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -135,11 +177,11 @@ export default function Index () {
 
       <View className='menu__rules'>
         <Text className='menu__rules-title'>玩法速览</Text>
-        <Text className='menu__rules-line'>· 3×3 棋盘，红蓝双方各持 3 枚棋子开局</Text>
-        <Text className='menu__rules-line'>· 落在空格，或用克制属性叠放在对方棋子上占领该格（单格最多 3 层）</Text>
+        <Text className='menu__rules-line'>· 3×3 棋盘，红蓝双方轮流落子</Text>
+        <Text className='menu__rules-line'>· 落在空格，或用克制属性叠放在对方棋子上占领该格（单格最多 8 层）</Text>
         <Text className='menu__rules-line'>· 三连不立即获胜：对手有一整回合的机会叠放打断</Text>
         <Text className='menu__rules-line'>· 打不断则三连方获胜；棋盘下满无三连为平局</Text>
-        <Text className='menu__rules-line'>· 每回合开始自动发牌：首回合 3 张，逐回合递增，6 张封顶</Text>
+        <Text className='menu__rules-line'>· 起始手牌 3 张，此后每回合自动抽 1 张；牌堆抽完即止，不重洗</Text>
       </View>
     </View>
   )

@@ -202,7 +202,7 @@
 
   &__status {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     gap: 16px;
     min-height: 72px;
@@ -210,12 +210,31 @@
   }
 
   &__status-text {
-    /* 文字占满整行，按实际宽度自动换行 */
+    /* 文字占满剩余宽度，按实际宽度自动换行 */
+    flex: 1;
     width: 100%;
     text-align: center;
     font-size: 28px;
     color: #3a3a3a;
     line-height: 1.4;
+  }
+
+  /* 对局中认输按钮（状态栏右侧小胶囊） */
+  &__resign {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 56px;
+    padding: 0 28px;
+    border-radius: 999px;
+    background: #e8e2d8;
+    color: #6b6357;
+    font-size: 24px;
+
+    &:active {
+      opacity: 0.85;
+    }
   }
 }
 
@@ -259,6 +278,23 @@
     border: 2px solid #f0dcb4;
     animation: pulse 1.2s ease-in-out infinite;
   }
+
+  /* 己方三连等待对手打断：绿色加粗 */
+  &--mine {
+    background: #e8f7ec;
+    color: #1e8e3e;
+    border: 2px solid #b7e4c3;
+    font-weight: bold;
+  }
+
+  /* 敌方三连等待己方打断：红色加粗 */
+  &--foe {
+    background: #fdeeee;
+    color: #d05048;
+    border: 2px solid #f0c4c0;
+    font-weight: bold;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
 }
 
 @keyframes pulse {
@@ -298,16 +334,6 @@
       border-color: #b6c8ea;
     }
 
-    &--ok {
-      border-color: #7bc47f;
-      border-style: dashed;
-      background: #f2f9f0;
-
-      &:active {
-        background: #e2f2dd;
-      }
-    }
-
     /* 双方最新一手：阵营色描边 + 角标 */
     &--last-red {
       border-color: #e0654a;
@@ -317,6 +343,31 @@
     &--last-blue {
       border-color: #4f7bd9;
       box-shadow: 0 0 0 4px rgba(79, 123, 217, 0.25);
+    }
+
+    /* 已选棋子的可落格：绿色加粗虚线（置于 last-* 之后，选中态优先） */
+    &--ok {
+      border-color: #2e9e44;
+      border-style: dashed;
+      border-width: 6px;
+      background: #f2f9f0;
+
+      &:active {
+        background: #e2f2dd;
+      }
+    }
+
+    /* 已选棋子的不可落格：浅灰蒙层 */
+    &--blocked {
+      &::after {
+        content: '';
+        position: absolute;
+        inset: 0;
+        border-radius: 13px;
+        background: rgba(120, 116, 108, 0.38);
+        pointer-events: none;
+        z-index: 3;
+      }
     }
   }
 
@@ -339,22 +390,19 @@
     }
   }
 
-  &__stack {
+  /* 叠放层数徽章（×N，满 8 层标红提示不可再叠） */
+  &__stack-count {
     position: absolute;
-    top: 10px;
-    right: 10px;
-    display: flex;
-    gap: 6px;
-  }
+    top: 8px;
+    right: 8px;
+    padding: 2px 12px;
+    border-radius: 999px;
+    background: rgba(143, 134, 118, 0.85);
+    font-size: 20px;
+    color: #fff;
 
-  &__stack-dot {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: #ddd5c7;
-
-    &--on {
-      background: #8f8676;
+    &--full {
+      background: #d05048;
     }
   }
 }

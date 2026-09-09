@@ -78,6 +78,13 @@ export class GameGateway {
     return { ok: true }
   }
 
+  /** 认输：对局中玩家主动判负，对方获胜 */
+  @SubscribeMessage('game:resign')
+  onResign(client: WebSocket) {
+    this.matchService.applyResign(client)
+    return { ok: true }
+  }
+
   // ---------- P4.1 房间约战 ----------
   // 注：WsAdapter 对 @SubscribeMessage 返回值的应答是裸 JSON（无事件名信封），
   // 客户端事件总线无法按事件名分发，故结果统一用带信封的 room:created / room:joined 推送。

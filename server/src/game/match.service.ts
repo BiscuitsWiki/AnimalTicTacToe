@@ -7,10 +7,10 @@ import type { WebSocket } from 'ws'
 import { PrismaService } from '../prisma.service.js'
 import { PieceService } from '../piece/piece.service.js'
 import {
-  createMatch, opponent, place, shuffle,
+  createMatch, opponent, place, resign, shuffle,
 } from './core/engine.js'
 import { freshDeck } from './core/pieces.js'
-import type { MatchState, PlaceEvent, Piece, Side } from './core/types.js'
+import type { MatchResult, MatchState, PlaceEvent, Piece, Side } from './core/types.js'
 import { DECK_SIZE } from './core/types.js'
 import type { Element } from './core/elements.js'
 
@@ -38,7 +38,7 @@ export interface Spectator {
 interface ActionRecord {
   seq: number
   side: Side
-  type: 'place' | 'deal'
+  type: 'place' | 'deal' | 'resign'
   payload: Record<string, unknown>
 }
 
@@ -239,11 +239,9 @@ export class MatchService {
         if (e.type === 'placed') {
           this.record(room, e.side, 'place', { handIdx, cellIdx })
         }
-        // 棋谱记录本回合自动发牌（含作废旧牌数）
+        // 棋谱记录本回合自动抽牌
         if (e.type === 'dealt') {
-          this.record(room, e.side, 'deal', {
-            count: e.pieces.length, discarded: e.discarded, reshuffled: e.reshuffled,
-          })
+          this.record(room, e.side, 'deal', { count: e.pieces.length })
         }
       }
       this.broadcast(room, events)
@@ -252,6 +250,22 @@ export class MatchService {
       }
     } catch {
       this.sendView(room, player, [])   // 非法落子：回推纠偏
+    }
+  }
+
+  /** 认输指令：side 直接判负，对方获胜 */
+  applyResign(socket: ClientSocket): void {
+    const room = this.roomOf(socket)
+    if (!room) return
+    const player = this.playerOf(room, socket)
+    if (!player || room.state.result) return
+    try {
+      const events = resign(room.state, player.side)
+      this.record(room, player.side, 'resign', {})
+      this.broadcast(room, events)
+      this.endMatch(room, room.state.result!.winner, room.state.result!.reason)
+    } catch {
+      // 对局已结束等异常：忽略
     }
   }
 
@@ -302,7 +316,7 @@ export class MatchService {
       room.forfeitTimer = null
     }
     room.state.phase = 'FINISHED'
-    room.state.result = { winner, reason: reason as 'line' | 'board_full' }
+    room.state.result = { winner, reason: reason as MatchResult['reason'] }
 
     for (const p of room.players) {
       this.push(p.socket, 'match:ended', {
@@ -411,7 +425,6 @@ export class MatchService {
           blue: hidden(s.hands.blue.length),
         } as MatchState['hands'],
         deck: hidden(s.deck.length),
-        deckSnapshot: [],
       },
       events: this.sanitizeEvents(events, 'spectator'),
     }
@@ -434,7 +447,6 @@ export class MatchService {
           [foe]: hidden(s.hands[foe].length),
         } as MatchState['hands'],
         deck: hidden(s.deck.length),
-        deckSnapshot: [],
       },
       events: this.sanitizeEvents(events, player.side),
     }

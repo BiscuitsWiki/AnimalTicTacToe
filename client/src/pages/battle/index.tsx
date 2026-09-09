@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, View, Text } from '@tarojs/components'
 import Taro, { useShareAppMessage, useUnload } from '@tarojs/taro'
 import {
-  canPlace, cloneState, createMatch, legalCells, place, sideNameZh, topSide,
+  canPlace, cloneState, createMatch, legalCells, place, resign, sideNameZh, topSide,
 } from '../../core/engine'
 import { ELEMENT_COLORS, ELEMENT_NAMES_ZH } from '../../core/elements'
 import { aiChoosePlacement } from '../../core/ai'
+import { STACK_LIMIT } from '../../core/types'
 import type { MatchState, PlaceEvent, Side } from '../../core/types'
 import { buildDeckFromServer } from '../../services/deckSource'
 import type { DeckSource } from '../../services/deckSource'
@@ -50,7 +51,7 @@ function eventToText(e: PlaceEvent): string {
         ? `${sideNameZh(e.side)}用「${e.piece.name}」叠放占领了${pos(e.cellIdx)}！`
         : `${sideNameZh(e.side)}在${pos(e.cellIdx)}放下了「${e.piece.name}」`
     case 'dealt':
-      return `${sideNameZh(e.side)}新回合${e.discarded > 0 ? `弃 ${e.discarded} 张旧牌、` : ''}获得 ${e.pieces.length} 张手牌${e.reshuffled ? '（牌堆已重洗）' : ''}`
+      return `${sideNameZh(e.side)}抽到 ${e.pieces.length} 张手牌`
     case 'pending_win':
       return `${sideNameZh(e.side)}三连！${sideNameZh(e.side === 'red' ? 'blue' : 'red')}有一回合的阻断机会`
     case 'blocked':
@@ -58,7 +59,9 @@ function eventToText(e: PlaceEvent): string {
     case 'win':
       return `${sideNameZh(e.winner)}获胜！`
     case 'draw':
-      return '棋盘已满且无三连，平局'
+      return '对局结束，平局'
+    case 'resigned':
+      return `${sideNameZh(e.side)}认输，${sideNameZh(e.side === 'red' ? 'blue' : 'red')}获胜！`
   }
 }
 
@@ -69,6 +72,8 @@ export default function Battle () {
   const role: 'host' | 'join' = router?.params?.role === 'join' ? 'join' : 'host'
   /** join 时携带的房间码（链接或输入传入） */
   const joinRoomId = String(router?.params?.room ?? '').trim().toUpperCase()
+  /** resume=1：主菜单探测到未完成对局后跳入，仅恢复不进匹配队列 */
+  const resumeOnly = router?.params?.resume === '1'
 
   const [match, setMatch] = useState<MatchState | null>(null)
   const [selected, setSelected] = useState<number | null>(null)
@@ -102,6 +107,8 @@ export default function Battle () {
   const genRef = useRef(0)
   /** 举报面板：正在举报的棋子（棋盘/手牌上的顶层棋子） */
   const [reportTarget, setReportTarget] = useState<{ pieceId: string; name: string } | null>(null)
+  /** 认输确认弹窗 */
+  const [resignOpen, setResignOpen] = useState(false)
 
   const pushLog = (lines: string[]) => {
     setLog(prev => [...lines, ...prev].slice(0, 30))
@@ -274,6 +281,16 @@ export default function Battle () {
     // 刷新/重进恢复：命中未完成对局则直接续玩，跳过匹配
     const probe = await probeResume(socket)
     if (probe.resumed) return
+    // 主菜单恢复入口跳入但未命中对局（刚好结束/超时判负）：不进匹配队列，直接返回
+    if (resumeOnly) {
+      endedRef.current = true
+      sockRef.current = null
+      socket.close()
+      setWaiting(false)
+      setLog(['未找到进行中的对局'])
+      Taro.navigateBack()
+      return
+    }
 
     socket.on('queue:waiting', () => {
       setLog(['匹配中，等待其他玩家加入…'])
@@ -507,6 +524,21 @@ export default function Battle () {
     pushLog(events.map(eventToText))
   }
 
+  /** 确认认输：本地（人机）直接结算；联机/房间发服务端裁决 */
+  const confirmResign = () => {
+    setResignOpen(false)
+    if (!match || match.phase === 'FINISHED' || spectating) return
+    if (mode === 'ai') {
+      const ns = cloneState(match)
+      const events = resign(ns, mySide)
+      setMatch(ns)
+      setSelected(null)
+      pushLog(events.map(eventToText))
+    } else {
+      pvpRef.current?.socket.send('game:resign', {})
+    }
+  }
+
   const restart = () => {
     genRef.current++
     setConnLost(false)
@@ -607,7 +639,7 @@ export default function Battle () {
     }
     const isMine = match.pendingWin.winnerSide === mySide
     return (
-      <View className={`banner ${isMine ? 'banner--win' : 'banner--danger'}`}>
+      <View className={`banner ${isMine ? 'banner--mine' : 'banner--foe'}`}>
         <Text>
           {isMine
             ? '你已达成三连！等待对手阻断…'
@@ -802,6 +834,8 @@ export default function Battle () {
           const top = cell.stack[cell.stack.length - 1]
           const side = topSide(cell)
           const canDrop = highlightCells.includes(idx)
+          /** 已选棋子且本格不可落：浅灰蒙层提示 */
+          const blocked = selected !== null && myTurn && !canDrop
           const isLastRed = match.lastPlaced.red === idx
           const isLastBlue = match.lastPlaced.blue === idx
           return (
@@ -812,6 +846,7 @@ export default function Battle () {
                 side === 'red' ? 'board__cell--red' : '',
                 side === 'blue' ? 'board__cell--blue' : '',
                 canDrop ? 'board__cell--ok' : '',
+                blocked ? 'board__cell--blocked' : '',
                 isLastRed ? 'board__cell--last-red' : '',
                 isLastBlue ? 'board__cell--last-blue' : '',
               ].join(' ')}
@@ -832,13 +867,10 @@ export default function Battle () {
                 </View>
               )}
               {cell.stack.length > 1 && (
-                <View className='board__stack'>
-                  {[0, 1, 2].map(i => (
-                    <View
-                      key={i}
-                      className={`board__stack-dot ${i < cell.stack.length ? 'board__stack-dot--on' : ''}`}
-                    />
-                  ))}
+                <View
+                  className={`board__stack-count ${cell.stack.length >= STACK_LIMIT ? 'board__stack-count--full' : ''}`}
+                >
+                  <Text>×{cell.stack.length}</Text>
                 </View>
               )}
             </View>
@@ -846,9 +878,14 @@ export default function Battle () {
         })}
       </View>
 
-      {/* 状态栏 */}
+      {/* 状态栏 + 认输入口 */}
       <View className='battle__status'>
         <Text className='battle__status-text'>{statusText()}</Text>
+        {!match.result && !spectating && (
+          <View className='battle__resign' onClick={() => setResignOpen(true)}>
+            <Text>认输</Text>
+          </View>
+        )}
       </View>
 
       {/* 手牌（观战者只读：双方手牌隐藏） */}
@@ -920,6 +957,24 @@ export default function Battle () {
         </View>
       )}
 
+      {/* 认输确认弹窗 */}
+      {resignOpen && (
+        <View className='mask' onClick={() => setResignOpen(false)}>
+          <View className='mask__panel' onClick={e => e.stopPropagation()}>
+            <Text className='mask__title'>认输</Text>
+            <Text className='mask__desc'>确认认输？认输后将直接判负，对方获胜</Text>
+            <View className='battle__room-actions'>
+              <View className='btn btn--draw' onClick={confirmResign}>
+                <Text>确认认输</Text>
+              </View>
+              <View className='btn btn--skip' onClick={() => setResignOpen(false)}>
+                <Text>取消</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      )}
+
       {/* 终局遮罩 */}
       {match.result && (
         <View className='mask' onClick={restart}>
@@ -932,7 +987,15 @@ export default function Battle () {
                   : match.result.winner === mySide ? '胜利！' : '惜败'}
             </Text>
             <Text className='mask__desc'>
-              {match.result.reason === 'line' ? '三连达成' : '棋盘下满且无三连'}
+              {match.result.reason === 'line'
+                ? '三连达成'
+                : match.result.reason === 'resign'
+                  ? '认输'
+                  : match.result.reason === 'no_moves'
+                    ? '无处可落'
+                    : match.result.reason === 'opponent_disconnect'
+                      ? '对手断线未归'
+                      : '棋盘下满且无三连'}
             </Text>
             <View className='btn btn--restart' onClick={restart}>
               <Text>

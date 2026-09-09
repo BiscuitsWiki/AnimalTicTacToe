@@ -2,16 +2,17 @@
  * 回合状态机与落子结算（服务端权威入口的本地版）。
  *
  * 核心规则（见 ../docs 或架构文档 3.3）：
- * - 回合发牌：每个回合开始时从牌堆自动发 N 张给行动方（N = 3 + 回合数 - 1，上限 6）
+ * - 抽牌制：双方首个行动回合各发起始手牌 3 张，此后每次轮到行动时从牌堆抽 1 张；
+ *   手牌跨回合保留（落 1 抽 1）；牌堆抽完即止，不重洗回牌堆
  * - 行动二选一：落在空格，或克制叠放在对方格上；每次行动只占据一格
- * - 叠放前置条件：① 目标格属对方 ② 叠放未满 3 层 ③ 行动棋子克制对方最上层
+ * - 叠放前置条件：① 目标格属对方 ② 叠放未满 8 层 ③ 行动棋子克制对方最上层
  * - 三连不立即获胜：进入待胜缓冲（pendingWin），对手一整回合内未能叠放打断 → 三连方获胜
- * - 手牌仅当回合有效：落子后剩余手牌保留（供玩家复盘本回合选择），
- *   轮到自己再次行动时才作废并重新发牌；牌堆抽完按 36 张快照重洗；棋盘下满且无三连 → 平局
+ * - 换边后若行动方发牌后仍无任何合法落子：有待胜则待胜方获胜，否则僵局判平局（no_moves）
+ * - 棋盘九格全部非空且无三连 → 平局
  */
 import { canCapture } from './elements'
 import {
-  BOARD_SIZE, RuleError, STACK_LIMIT, TURN_DEAL_BASE, TURN_DEAL_MAX,
+  BOARD_SIZE, RuleError, STACK_LIMIT, TURN_DEAL_BASE, TURN_DRAW_COUNT,
 } from './types'
 import type {
   Cell, MatchState, Piece, PlaceEvent, Side,
@@ -41,23 +42,22 @@ function emptyBoard(): Cell[] {
   return Array.from({ length: BOARD_SIZE }, () => ({ stack: [] }))
 }
 
-/** 第 turnCount 回合的开始发牌数：3 起步，每回合 +1，封顶 6 */
+/** 第 turnCount 回合的开始抽牌数：双方首个行动回合（1、2）发 3 张，之后每回合抽 1 张 */
 export function dealCountFor(turnCount: number): number {
-  return Math.min(TURN_DEAL_BASE + turnCount - 1, TURN_DEAL_MAX)
+  return turnCount <= 2 ? TURN_DEAL_BASE : TURN_DRAW_COUNT
 }
 
 export interface CreateMatchOptions {
   deck: Piece[]
 }
 
-/** 创建对局：红方先行（第 1 回合，自动发 3 张） */
+/** 创建对局：红方先行（第 1 回合，发起始手牌 3 张） */
 export function createMatch({ deck }: CreateMatchOptions): MatchState {
   const state: MatchState = {
     phase: 'TURN_ACTION',
     board: emptyBoard(),
     hands: { red: [], blue: [] },
     deck: [...deck],
-    deckSnapshot: [...deck],
     turnCount: 1,
     turnSide: 'red',
     lastPlaced: { red: null, blue: null },
@@ -69,32 +69,18 @@ export function createMatch({ deck }: CreateMatchOptions): MatchState {
 }
 
 /**
- * 回合发牌（替换式）：side 再次行动的回合开始，旧手牌作废、
- * 重置为牌堆新发的 n 张（n 由 turnCount 决定）。
- * 牌堆为空时按快照重洗补足；牌堆与快照均空（退化配置，仅测试出现）则跳过发牌。
- * @returns 发出的牌、作废的旧牌数与是否触发重洗
+ * 回合抽牌（累加式）：side 行动回合开始，从牌堆抽 n 张加入手牌
+ * （n 由 turnCount 决定：首回合 3 张，其后 1 张）。牌堆为空则跳过（抽完即止，不重洗）。
+ * @returns 实际抽到的牌
  */
-function dealTo(
-  state: MatchState, side: Side,
-): { pieces: Piece[]; discarded: number; reshuffled: boolean } {
-  // 无循环牌库（空堆+空快照，仅测试构造出现）：不清理不补发，手牌保持原样
-  if (state.deck.length === 0 && state.deckSnapshot.length === 0) {
-    return { pieces: [], discarded: 0, reshuffled: false }
-  }
-  let reshuffled = false
+function dealTo(state: MatchState, side: Side): { pieces: Piece[] } {
   const n = dealCountFor(state.turnCount)
-  const discarded = state.hands[side].length
   const pieces: Piece[] = []
-  while (pieces.length < n) {
-    if (state.deck.length === 0) {
-      if (state.deckSnapshot.length === 0) break
-      state.deck = shuffle([...state.deckSnapshot])   // 同一套卡循环
-      reshuffled = true
-    }
+  while (pieces.length < n && state.deck.length > 0) {
     pieces.push(state.deck.shift()!)
   }
-  state.hands[side] = pieces
-  return { pieces, discarded, reshuffled }
+  state.hands[side].push(...pieces)
+  return { pieces }
 }
 
 /** 格子当前归属（最上层棋子的阵营），空格返回 null */
@@ -124,7 +110,7 @@ function isLegalTarget(board: Cell[], side: Side, piece: Piece, cellIdx: number)
   const top = cell.stack[cell.stack.length - 1]
   return (
     top.side !== side &&                                         // ① 对方格
-    cell.stack.length < STACK_LIMIT &&                           // ② 未满 3 层
+    cell.stack.length < STACK_LIMIT &&                           // ② 未满 8 层
     canCapture(piece.element, top.piece.element)                 // ③ 克制最上层
   )
 }
@@ -139,7 +125,7 @@ export function canPlace(
   return isLegalTarget(state.board, side, hand[handIdx], cellIdx)
 }
 
-/** 指定阵营是否存在任意合法落子（假设轮到其行动，用于卡死判定） */
+/** 指定阵营是否存在任意合法落子（假设轮到其行动，用于僵局判定） */
 export function hasAnyLegalPlacement(state: MatchState, side: Side): boolean {
   for (const piece of state.hands[side]) {
     for (let c = 0; c < BOARD_SIZE; c++) {
@@ -154,8 +140,9 @@ export function hasAnyLegalPlacement(state: MatchState, side: Side): boolean {
  * 1. 校验并落子（空格落子 / 克制叠放二选一）
  * 2. 若对手存在待胜：本次行动后其三连仍在 → 其获胜；被打断 → 清除待胜
  * 3. 我方成三连 → 置待胜缓冲
- * 4. 棋盘下满且无三连 → 平局
- * 5. 换边进入对手回合（自动发牌）；若对手（待胜阻断方）发牌后仍无任何合法落子 → 待胜方直接获胜
+ * 4. 棋盘九格全部非空且无三连 → 平局
+ * 5. 换边进入对手回合（自动抽牌）；对手抽牌后仍无任何合法落子 →
+ *    有待胜则待胜方获胜，否则僵局平局（no_moves：手牌用尽或无处可叠）
  */
 export function place(
   state: MatchState, side: Side, handIdx: number, cellIdx: number,
@@ -182,7 +169,7 @@ export function place(
     cell.stack.push({ side, piece })                           // b. 克制叠放占领
   }
   hand.splice(handIdx, 1)
-  // 记录该方最近落子格（公开信息，棋盘高亮用）；剩余手牌保留至其下次行动回合开始
+  // 记录该方最近落子格（公开信息，棋盘高亮用）；手牌跨回合保留，下次行动回合开始再抽 1 张
   state.lastPlaced[side] = cellIdx
   events.push({ type: 'placed', side, cellIdx, piece, stacked })
 
@@ -204,7 +191,7 @@ export function place(
   // 3. 我方三连 → 判定链路是否可被阻断
   const myLines = linesOf(state.board, side)
   if (myLines.length > 0) {
-    // 阻断的唯一手段是叠放占领链路上的格子（要求层数 < 3）；
+    // 阻断的唯一手段是叠放占领链路上的格子（要求层数 < 8）；
     // 链路全部格子已叠满 → 对手永远无法阻断，立即判胜
     const unblockable = myLines.find(line =>
       line.every(i => state.board[i].stack.length >= STACK_LIMIT))
@@ -227,29 +214,39 @@ export function place(
     return events
   }
 
-  // 5. 换边：进入对手回合并自动发牌
+  // 5. 换边：进入对手回合并自动抽牌
   state.turnSide = opp
   state.turnCount++
   state.phase = 'TURN_ACTION'
   const dealt = dealTo(state, opp)
-  if (dealt.pieces.length > 0 || dealt.discarded > 0) {
-    events.push({
-      type: 'dealt', side: opp, pieces: dealt.pieces,
-      discarded: dealt.discarded, reshuffled: dealt.reshuffled,
-    })
+  if (dealt.pieces.length > 0) {
+    events.push({ type: 'dealt', side: opp, pieces: dealt.pieces })
   }
 
-  // 对手为阻断方且发牌后仍无合法落子 → 待胜方获胜
-  if (
-    state.pendingWin &&
-    state.pendingWin.winnerSide === side &&
-    !hasAnyLegalPlacement(state, opp)
-  ) {
+  // 对手抽牌后仍无合法落子：待胜方直接获胜；否则僵局平局（no_moves）
+  if (!hasAnyLegalPlacement(state, opp)) {
     state.phase = 'FINISHED'
-    state.result = { winner: side, reason: 'line' }
-    events.push({ type: 'win', winner: side, line: state.pendingWin.line })
+    if (state.pendingWin && state.pendingWin.winnerSide === side) {
+      state.result = { winner: side, reason: 'line' }
+      events.push({ type: 'win', winner: side, line: state.pendingWin.line })
+    } else {
+      state.result = { winner: 'draw', reason: 'no_moves' }
+      events.push({ type: 'draw' })
+    }
   }
   return events
+}
+
+/**
+ * 认输结算：side 主动认输，直接判负、对方获胜。
+ * 对局已结束时抛 GAME_OVER。
+ */
+export function resign(state: MatchState, side: Side): PlaceEvent[] {
+  if (state.phase === 'FINISHED') throw new RuleError('GAME_OVER')
+  const winner = opponent(side)
+  state.phase = 'FINISHED'
+  state.result = { winner, reason: 'resign' }
+  return [{ type: 'resigned', side }]
 }
 
 /** Fisher-Yates 洗牌（原地） */

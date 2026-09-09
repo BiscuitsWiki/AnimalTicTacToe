@@ -1,13 +1,13 @@
 /**
  * 规则引擎单元测试（vitest）。
- * 覆盖：克制表、回合发牌（数量递增/封顶/替换式/重洗）、落子与叠放、待胜阻断、平局。
- * 手动抽牌已移除：回合开始由引擎自动发牌。
+ * 覆盖：克制表、回合抽牌（起始 3 张 + 每回合 1 张、不重洗）、落子与叠放（上限 8 层）、
+ * 待胜阻断、平局（board_full / no_moves）、认输。
  */
 import { describe, expect, it } from 'vitest'
 import { canCapture, effectiveness } from '../elements'
 import {
   canPlace, cloneState, createMatch, dealCountFor, hasAnyLegalPlacement,
-  legalCells, linesOf, place, shuffle, topSide,
+  legalCells, linesOf, place, resign, shuffle, topSide,
 } from '../engine'
 import type { MatchState, Piece, Side } from '../types'
 
@@ -15,8 +15,8 @@ const P = (id: string, element: Piece['element']): Piece =>
   ({ id, name: id, element })
 
 /**
- * 直接构造对局状态（精确控制双方手牌；deck 默认为空 = 不触发自动发牌干扰）。
- * 适用于落子/叠放/胜负判定类用例；发牌规则本身用 createMatch 或显式 deck 测试。
+ * 直接构造对局状态（精确控制双方手牌；deck 默认为空 = 不触发自动抽牌干扰）。
+ * 适用于落子/叠放/胜负判定类用例；抽牌规则本身用 createMatch 或显式 deck 测试。
  */
 function makeState(
   redEls: Piece['element'][],
@@ -32,7 +32,6 @@ function makeState(
       blue: blueEls.map((e, i) => P(`b${i}`, e)),
     },
     deck: deckEls.map((e, i) => P(`dk${i}`, e)),
-    deckSnapshot: deckEls.map((e, i) => P(`dk${i}`, e)),
     turnCount: opts.turnCount ?? 1,
     turnSide: opts.turnSide ?? 'red',
     lastPlaced: { red: null, blue: null },
@@ -61,13 +60,13 @@ describe('属性克制表', () => {
   })
 })
 
-describe('回合发牌', () => {
-  it('发牌数：3 起步每回合 +1，第 4 回合起封顶 6', () => {
+describe('回合抽牌', () => {
+  it('抽牌数：双方首个行动回合各 3 张，此后每回合 1 张', () => {
     expect(dealCountFor(1)).toBe(3)
-    expect(dealCountFor(2)).toBe(4)
-    expect(dealCountFor(3)).toBe(5)
-    expect(dealCountFor(4)).toBe(6)
-    expect(dealCountFor(9)).toBe(6)
+    expect(dealCountFor(2)).toBe(3)
+    expect(dealCountFor(3)).toBe(1)
+    expect(dealCountFor(4)).toBe(1)
+    expect(dealCountFor(9)).toBe(1)
   })
 
   it('开局：红方第 1 回合自动发 3 张，直接可落子', () => {
@@ -82,23 +81,21 @@ describe('回合发牌', () => {
     expect(s.board).toHaveLength(9)
   })
 
-  it('换边自动发牌：对手旧手牌作废，按回合数重发并产生 dealt 事件', () => {
+  it('换边自动抽牌：对手首个行动回合发起始 3 张并产生 dealt 事件', () => {
     const s = makeState(['fire'], ['water'], ['normal', 'normal', 'normal', 'normal'])
     const ev = place(s, 'red', 0, 0)
     expect(s.turnSide).toBe('blue')
     expect(s.turnCount).toBe(2)
-    expect(s.hands.blue).toHaveLength(4)   // 原 1 张作废，第 2 回合重发 4 张
+    expect(s.hands.blue).toHaveLength(4)   // 原 1 张 + 首回合抽 3 张（累加）
     const dealt = ev.find(e => e.type === 'dealt')
     expect(dealt).toBeDefined()
     if (dealt?.type === 'dealt') {
       expect(dealt.side).toBe('blue')
-      expect(dealt.pieces).toHaveLength(4)
-      expect(dealt.discarded).toBe(1)
-      expect(dealt.reshuffled).toBe(false)
+      expect(dealt.pieces).toHaveLength(3)
     }
   })
 
-  it('落子后剩余手牌保留：供玩家复盘，不立即作废', () => {
+  it('落子后剩余手牌保留：落 1 抽 1，不作废不重发', () => {
     const s = makeState(
       ['fire', 'fire', 'fire'],
       ['water'],
@@ -120,29 +117,31 @@ describe('回合发牌', () => {
     expect(s.lastPlaced.red).toBe(0)
   })
 
-  it('清牌时机在下个行动回合开始：囤 5 张未用，再行动时作废并重发 4 张', () => {
+  it('手牌跨回合累加：非首个行动回合每次只抽 1 张', () => {
     const s = makeState(
-      ['fire', 'fire', 'fire', 'fire', 'fire'],
+      ['fire', 'fire', 'fire'],
       ['water'],
       ['normal', 'normal', 'normal', 'normal'],
-      { turnSide: 'blue' },
+      { turnSide: 'blue', turnCount: 3 },
     )
-    place(s, 'blue', 0, 3)   // blue 走完 → red 第 2 回合开始：旧 5 张作废，重发 4 张
-    expect(s.hands.red).toHaveLength(4)
-    expect(s.hands.red.every(p => p.id.startsWith('dk'))).toBe(true)   // 全为新牌
+    place(s, 'blue', 0, 3)   // blue 走完 → red 第 4 回合开始：仅抽 1 张
+    expect(s.hands.red).toHaveLength(4)                        // 3 原有 + 1 新抽
+    expect(s.hands.red.filter(p => p.id.startsWith('r'))).toHaveLength(3)   // 原牌保留
   })
 
-  it('牌堆耗尽自动按快照重洗补足', () => {
-    const s = makeState(['fire'], ['water'], ['normal', 'fire'])
-    const ev = place(s, 'red', 0, 0)   // blue 发 4 张：牌堆仅 2 张 → 重洗快照补足
-    const dealt = ev.find(e => e.type === 'dealt')
-    expect(dealt).toBeDefined()
-    expect(dealt && dealt.type === 'dealt' ? dealt.reshuffled : false).toBe(true)
-    expect(dealt && dealt.type === 'dealt' ? dealt.pieces.length : 0).toBe(4)
-    expect(s.deckSnapshot).toHaveLength(2)   // 快照不变
+  it('牌堆耗尽不重洗：剩余不足抽多少算多少，为空则不再抽', () => {
+    const s = makeState(['fire'], ['water'], ['normal'], { turnCount: 3 })
+    const ev1 = place(s, 'red', 0, 0)
+    expect(s.hands.blue).toHaveLength(2)   // 1 原有 + 抽走牌堆仅剩的 1 张
+    expect(s.deck).toHaveLength(0)
+    const dealt1 = ev1.find(e => e.type === 'dealt')
+    expect(dealt1 && dealt1.type === 'dealt' ? dealt1.pieces.length : 0).toBe(1)
+    const ev2 = place(s, 'blue', 0, 3)
+    expect(s.hands.red).toHaveLength(0)    // 牌堆已空：不再抽
+    expect(ev2.some(e => e.type === 'dealt')).toBe(false)
   })
 
-  it('空牌堆且空快照（退化配置）：跳过发牌，手牌保持原样', () => {
+  it('空牌堆：跳过抽牌，手牌保持原样', () => {
     const s = makeState(['fire'], ['water'], [])
     const ev = place(s, 'red', 0, 0)
     expect(s.hands.blue).toHaveLength(1)   // 不清理不补发
@@ -193,15 +192,24 @@ describe('落子与叠放占领', () => {
     expect(() => place(s, 'red', 0, 4)).toThrow(/CELL_OWNED/)
   })
 
-  it('单格叠放上限 3 层', () => {
-    // (0,0): red grass → blue fire(克制) → red water(克制fire) → 满 3 层
-    const s = makeState(['grass', 'water'], ['fire', 'ground'], [])
-    place(s, 'red', 0, 0)          // red grass
-    place(s, 'blue', 0, 0)         // blue fire 叠放
-    place(s, 'red', 0, 0)          // red water 叠放 → 3 层
-    expect(s.board[0].stack).toHaveLength(3)
-    expect(canPlace(s, 'blue', 0, 0)).toBe(false) // 已达上限
-    expect(() => place(s, 'blue', 0, 0)).toThrow(/STACK_FULL/)
+  it('单格叠放上限 8 层', () => {
+    // (0,0) 交替克制链叠满 8 层：grass→fire→water→grass→fire→water→grass→fire
+    const s = makeState(
+      ['grass', 'water', 'fire', 'grass', 'water'],
+      ['fire', 'grass', 'water', 'fire', 'water'],
+      [],
+    )
+    place(s, 'red', 0, 0)    // 1: red grass
+    place(s, 'blue', 0, 0)   // 2: blue fire 克制 grass
+    place(s, 'red', 0, 0)    // 3: red water 克制 fire
+    place(s, 'blue', 0, 0)   // 4: blue grass 克制 water
+    place(s, 'red', 0, 0)    // 5: red fire 克制 grass
+    place(s, 'blue', 0, 0)   // 6: blue water 克制 fire
+    place(s, 'red', 0, 0)    // 7: red grass 克制 water
+    place(s, 'blue', 0, 0)   // 8: blue fire 克制 grass → 满 8 层
+    expect(s.board[0].stack).toHaveLength(8)
+    expect(canPlace(s, 'red', 0, 0)).toBe(false) // 已达上限（red 剩 water 克制顶层 fire）
+    expect(() => place(s, 'red', 0, 0)).toThrow(/STACK_FULL/)
   })
 
   it('非本回合不可落子', () => {
@@ -265,15 +273,22 @@ describe('待胜阻断', () => {
     expect(s.result?.reason).toBe('line')
   })
 
-  it('三连链路全部格子叠满 → 无法阻断，立即判胜（跳过待胜缓冲）', () => {
-    // 0/1 格 red 已 3 层，2 格 blue 2 层；red water 叠放 2 格 → 三连且 0/1/2 均 3 层
+  it('三连链路全部格子叠满 8 层 → 无法阻断，立即判胜（跳过待胜缓冲）', () => {
+    // 0/1 格已满 8 层且顶层 red，2 格 7 层顶层 blue fire；red water 叠放 2 格第 8 层 → 三连且全链叠满
     const s = makeState(['water'], ['fire'], [])
-    const red3 = { side: 'red' as const, piece: P('rx', 'water') }
     const blueFire = (id: string) => ({ side: 'blue' as const, piece: P(id, 'fire') })
-    s.board[0].stack = [blueFire('b0a'), blueFire('b0b'), red3]
-    s.board[1].stack = [blueFire('b1a'), blueFire('b1b'), red3]
-    s.board[2].stack = [blueFire('b2a'), blueFire('b2b')]
-    const ev = place(s, 'red', 0, 2)     // water 克制 fire，叠放占领 2 格
+    const redWater = (id: string) => ({ side: 'red' as const, piece: P(id, 'water') })
+    const fullRedTop = (p: string) => [
+      blueFire(`${p}a`), redWater(`${p}r1`), blueFire(`${p}b`), redWater(`${p}r2`),
+      blueFire(`${p}c`), redWater(`${p}r3`), blueFire(`${p}d`), redWater(`${p}r4`),
+    ]
+    s.board[0].stack = fullRedTop('c0')
+    s.board[1].stack = fullRedTop('c1')
+    s.board[2].stack = [
+      blueFire('c2a'), blueFire('c2b'), blueFire('c2c'), blueFire('c2d'),
+      blueFire('c2e'), blueFire('c2f'), blueFire('c2g'),
+    ]
+    const ev = place(s, 'red', 0, 2)     // water 克制 fire，叠放占领 2 格 → 满 8 层
     expect(ev.some(e => e.type === 'pending_win')).toBe(false)
     expect(ev.some(e => e.type === 'win' && e.winner === 'red')).toBe(true)
     expect(s.result?.winner).toBe('red')
@@ -325,6 +340,41 @@ describe('平局判定', () => {
     expect(s.result).toEqual({ winner: 'draw', reason: 'board_full' })
     expect(linesOf(s.board, 'red')).toHaveLength(0)
     expect(linesOf(s.board, 'blue')).toHaveLength(0)
+  })
+
+  it('换边后行动方手牌用尽且牌堆为空 → 僵局平局（no_moves）', () => {
+    // 8 格已占（无三连），red 叠放占领 6 格后棋盘仍未满；
+    // blue 手牌为空、牌堆为空 → 无处可落且无待胜 → 僵局平局
+    const s = makeState(['fire'], [], [])
+    const L = (side: Side, el: Piece['element'], i: number) =>
+      ({ side, piece: P(`${side}${i}_${el}`, el) })
+    s.board[0].stack = [L('blue', 'grass', 0)]
+    s.board[1].stack = [L('red', 'fire', 1)]
+    s.board[2].stack = [L('blue', 'fire', 2)]
+    s.board[3].stack = [L('red', 'fire', 3)]
+    s.board[4].stack = [L('blue', 'fire', 4)]
+    s.board[5].stack = [L('red', 'fire', 5)]
+    s.board[6].stack = [L('blue', 'grass', 6)]
+    s.board[7].stack = [L('red', 'fire', 7)]
+    const ev = place(s, 'red', 0, 6)     // fire 克制 grass，叠放 6 格
+    expect(ev.some(e => e.type === 'draw')).toBe(true)
+    expect(s.result).toEqual({ winner: 'draw', reason: 'no_moves' })
+  })
+})
+
+describe('认输', () => {
+  it('认输直接判负，对方获胜', () => {
+    const s = makeState(['fire'], ['water'])
+    const ev = resign(s, 'red')
+    expect(s.phase).toBe('FINISHED')
+    expect(s.result).toEqual({ winner: 'blue', reason: 'resign' })
+    expect(ev.some(e => e.type === 'resigned' && e.side === 'red')).toBe(true)
+  })
+
+  it('对局已结束不可认输', () => {
+    const s = makeState(['fire'], ['water'])
+    resign(s, 'red')
+    expect(() => resign(s, 'blue')).toThrow(/GAME_OVER/)
   })
 })
 

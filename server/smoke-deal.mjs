@@ -1,8 +1,8 @@
 /**
- * 回合发牌制 WS 冒烟：
+ * 回合抽牌制 WS 冒烟：
  * 1. 双人匹配开局 → 初始红方 3 张、蓝 0 张、turnCount=1、phase=TURN_ACTION
- * 2. 红落子 → 蓝方自动发 4 张（dealt 事件）：蓝视角明文、红视角脱敏 '?'
- * 3. 蓝落子 → 红方自动发 5 张（第 3 回合）：红视角明文、蓝视角脱敏
+ * 2. 红落子 → 蓝方首回合发起始 3 张（dealt 事件）：蓝视角明文、红视角脱敏 '?'
+ * 3. 蓝落子 → 红方回合开始抽 1 张（第 3 回合，手牌累加 2+1=3）：红视角明文、蓝视角脱敏
  */
 import WebSocket from 'ws'
 
@@ -72,30 +72,30 @@ assert(redView0.state.hands.red.every(p => p.name !== '?'), '红方自己手牌�
 assert(blueView0.state.hands.blue.length === 0, '蓝方开局 0 张')
 assert(blueView0.state.hands.red.every(p => p.name === '?'), '蓝视角红方手牌隐藏')
 
-// 红落子 → 蓝方回合开始：作废旧牌重发 4 张；红方剩余手牌保留
+// 红落子 → 蓝方回合开始：首回合发起始 3 张；红方剩余手牌保留
 red.send('game:place', { handIdx: 0, cellIdx: 0 })
 const redView1 = await red.wait('game:state')
 const blueView1 = await blue.wait('game:state')
 assert(redView1.state.turnCount === 2 && redView1.state.turnSide === 'blue', '换边后 turnCount=2 轮蓝方')
-assert(blueView1.state.hands.blue.length === 4, '蓝方第 2 回合自动发 4 张')
-assert(blueView1.state.hands.blue.every(p => p.name !== '?'), '蓝方自己发牌明文')
-assert(redView1.state.hands.red.length === 2, '红方落子后剩余 2 张手牌保留（不立即作废）')
+assert(blueView1.state.hands.blue.length === 3, '蓝方首回合发起始 3 张')
+assert(blueView1.state.hands.blue.every(p => p.name !== '?'), '蓝方自己手牌明文')
+assert(redView1.state.hands.red.length === 2, '红方落子后剩余 2 张手牌保留')
 assert(redView1.state.lastPlaced.red === 0, 'lastPlaced 记录红方最近落子格')
 assert(blueView1.state.lastPlaced.red === 0, '对手视角同步 lastPlaced')
 const dealtRed = redView1.events.find(e => e.type === 'dealt')
-assert(!!dealtRed && dealtRed.pieces.length === 4, '红视角收到蓝方 dealt 事件（4 张）')
+assert(!!dealtRed && dealtRed.pieces.length === 3, '红视角收到蓝方 dealt 事件（3 张）')
 assert(dealtRed.pieces.every(p => p.name === '?'), '红视角蓝方发牌内容脱敏为 ?')
 
-// 蓝落子 → 红方回合开始（第 3 回合）：作废旧 2 张、重发 5 张
+// 蓝落子 → 红方回合开始（第 3 回合）：抽 1 张，手牌累加 2+1=3
 blue.send('game:place', { handIdx: 0, cellIdx: 3 })
 const blueView2 = await blue.wait('game:state')
 const redView2 = await red.wait('game:state')
 assert(redView2.state.turnCount === 3 && redView2.state.turnSide === 'red', 'turnCount=3 轮红方')
-assert(redView2.state.hands.red.length === 5, '红方第 3 回合开始作废旧牌后重发 5 张')
+assert(redView2.state.hands.red.length === 3, '红方第 3 回合开始手牌累加（2 剩余 + 抽 1 = 3 张）')
 assert(redView2.state.lastPlaced.blue === 3, 'lastPlaced 记录蓝方最近落子格')
-assert(blueView2.state.hands.blue.length === 3, '蓝方落子后剩余 3 张手牌保留')
+assert(blueView2.state.hands.blue.length === 2, '蓝方落子后剩余 2 张手牌保留')
 const dealtBlue = blueView2.events.find(e => e.type === 'dealt')
-assert(!!dealtBlue && dealtBlue.pieces.length === 5, '蓝视角收到红方 dealt 事件（5 张）')
+assert(!!dealtBlue && dealtBlue.pieces.length === 1, '蓝视角收到红方 dealt 事件（1 张）')
 assert(dealtBlue.pieces.every(p => p.name === '?'), '蓝视角红方发牌内容脱敏为 ?')
 
 console.log('\nALL SMOKE TESTS PASSED')
