@@ -26,6 +26,9 @@ interface RoomStateView {
   phase: 'waiting' | 'playing'
   hostName: string
   guestName: string | null
+  /** 红/蓝坐席昵称（房主换边后随之互换） */
+  redName: string
+  blueName: string | null
   spectatorCount: number
 }
 
@@ -260,8 +263,8 @@ export default function Battle () {
     Taro.navigateBack()
   }
 
-  /** pvp 模式：登录 → 连接 WS 进入匹配 */
-  const startPvpMatch = async () => {
+  /** pvp 模式：登录 → 连接 WS 进入匹配；restart=true 为终局后"再来一局"主动重开 */
+  const startPvpMatch = async (restart = false) => {
     endedRef.current = false
     // 先确保登录（游客登录失败也允许以游客身份匹配旧行为降级）
     const user = await ensureLogin()
@@ -284,7 +287,8 @@ export default function Battle () {
     const probe = await probeResume(socket)
     if (probe.resumed) return
     // 主菜单恢复入口跳入但未命中对局（刚好结束/超时判负）：不进匹配队列，直接返回
-    if (resumeOnly) {
+    // （终局后"再来一局"主动重开时不受此限制，正常进入匹配队列）
+    if (resumeOnly && !restart) {
       endedRef.current = true
       sockRef.current = null
       socket.close()
@@ -409,6 +413,12 @@ export default function Battle () {
     socket.on('room:transferred', (d: { ok: boolean; error?: string }) => {
       if (d.ok) return
       Taro.showToast({ title: d.error === 'no_guest' ? '对方尚未入座' : '暂时无法转让', icon: 'none' })
+    })
+
+    // 换边失败提示（非房主操作/对局进行中等）
+    socket.on('room:swapped', (d: { ok: boolean; error?: string }) => {
+      if (d.ok) return
+      Taro.showToast({ title: d.error === 'match_running' ? '对局中不可换边' : '暂时无法换边', icon: 'none' })
     })
 
     // 房间解散（房主退出无坐席/TTL）
@@ -619,6 +629,11 @@ export default function Battle () {
     sockRef.current?.send('room:host:transfer', { roomId, token: getToken(), playerId: getUserId() })
   }
 
+  /** 房主换边：红蓝坐席互换（选择先后手），仅等待阶段 */
+  const swapRoomSeats = () => {
+    sockRef.current?.send('room:swap', { roomId, token: getToken(), playerId: getUserId() })
+  }
+
   /** H5 邀请链接（小程序端无 location，P4.3 换分享卡片） */
   const shareUrl = () => {
     if (typeof location === 'undefined' || !roomId) return ''
@@ -695,10 +710,13 @@ export default function Battle () {
       )
     }
 
-    // room 模式：房间大厅（坐席展示 + 房主开始/转让 + 观战等待）
+    // room 模式：房间大厅（坐席展示 + 房主开始/换边/转让 + 观战等待）
     if (mode === 'room') {
       const isHost = myRole === 'host'
       const guestSeated = !!roomState?.guestName
+      /** 坐席卡按红/蓝坐席昵称渲染（房主换边后随 room:state 互换）；房主标签跟所有权 */
+      const redSeated = !!roomState?.redName
+      const blueSeated = !!roomState?.blueName
       return (
         <View className='battle battle--lobby'>
           <Text className='battle__lobby-title'>
@@ -708,15 +726,22 @@ export default function Battle () {
             <>
               <View className='battle__seats'>
                 <View className='battle__seat battle__seat--red'>
-                  <Text className='battle__seat-side'>红方坐席</Text>
-                  <Text className='battle__seat-name'>{roomState?.hostName ?? '玩家'}</Text>
-                  <Text className='battle__seat-tag'>房主</Text>
+                  <Text className='battle__seat-side'>红方坐席（先手）</Text>
+                  <Text className={`battle__seat-name ${redSeated ? '' : 'battle__seat-name--empty'}`}>
+                    {roomState?.redName || '等待入座…'}
+                  </Text>
+                  {roomState?.hostName === roomState?.redName && redSeated && (
+                    <Text className='battle__seat-tag'>房主</Text>
+                  )}
                 </View>
                 <View className='battle__seat battle__seat--blue'>
-                  <Text className='battle__seat-side'>蓝方坐席</Text>
-                  <Text className={`battle__seat-name ${guestSeated ? '' : 'battle__seat-name--empty'}`}>
-                    {roomState?.guestName ?? '等待入座…'}
+                  <Text className='battle__seat-side'>蓝方坐席（后手）</Text>
+                  <Text className={`battle__seat-name ${blueSeated ? '' : 'battle__seat-name--empty'}`}>
+                    {roomState?.blueName || '等待入座…'}
                   </Text>
+                  {roomState?.hostName === roomState?.blueName && blueSeated && (
+                    <Text className='battle__seat-tag'>房主</Text>
+                  )}
                 </View>
               </View>
               <Text className='battle__room-hint'>
@@ -730,6 +755,9 @@ export default function Battle () {
                     onClick={guestSeated ? startRoomGame : undefined}
                   >
                     <Text>开始对局</Text>
+                  </View>
+                  <View className='btn btn--skip' onClick={swapRoomSeats}>
+                    <Text>换边</Text>
                   </View>
                   {guestSeated && (
                     <View className='btn btn--skip' onClick={transferRoomHost}>
@@ -804,7 +832,7 @@ export default function Battle () {
           <View className='battle__room-actions'>
             <View
               className='btn btn--draw'
-              onClick={() => { setEnded(false); startPvpMatch() }}
+              onClick={() => { setEnded(false); startPvpMatch(true) }}
             >
               <Text>再来一局</Text>
             </View>
@@ -857,8 +885,6 @@ export default function Battle () {
           const top = cell.stack[cell.stack.length - 1]
           const side = topSide(cell)
           const canDrop = highlightCells.includes(idx)
-          /** 已选棋子且本格不可落：浅灰蒙层提示 */
-          const blocked = selected !== null && myTurn && !canDrop
           const isLastRed = match.lastPlaced.red === idx
           const isLastBlue = match.lastPlaced.blue === idx
           return (
@@ -869,7 +895,6 @@ export default function Battle () {
                 side === 'red' ? 'board__cell--red' : '',
                 side === 'blue' ? 'board__cell--blue' : '',
                 canDrop ? 'board__cell--ok' : '',
-                blocked ? 'board__cell--blocked' : '',
                 isLastRed ? 'board__cell--last-red' : '',
                 isLastBlue ? 'board__cell--last-blue' : '',
               ].join(' ')}

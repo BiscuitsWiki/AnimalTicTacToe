@@ -157,6 +157,21 @@ export class GameGateway {
     return { ok: true }
   }
 
+  /** 房主换边：红蓝坐席互换（选择先后手），仅等待阶段 */
+  @SubscribeMessage('room:swap')
+  async onRoomSwap(
+    client: WebSocket,
+    data: { roomId?: string; token?: string; playerId?: string },
+  ) {
+    const user = await this.auth.verifyTokenOrNull(data?.token)
+    const playerId = user?.id ?? String(data?.playerId ?? '').slice(0, 64)
+    if (!playerId) return { ok: false, error: 'unauthorized' }
+    const roomId = String(data?.roomId ?? '').trim().toUpperCase().slice(0, 8)
+    const res = this.roomService.swapSeats(roomId, playerId)
+    client.send(JSON.stringify({ event: 'room:swapped', data: res }))
+    return { ok: true }
+  }
+
   @SubscribeMessage('room:leave')
   onRoomLeave(client: WebSocket) {
     this.roomService.leaveRoom(client)

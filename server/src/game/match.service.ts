@@ -126,7 +126,7 @@ export class MatchService {
     return true
   }
 
-  /** 加入匹配队列；队列已有等待者则立即撮合并开局 */
+  /** 加入匹配队列；队列已有等待者则立即撮合并开局（掷硬币随机先后手） */
   async joinQueue(playerId: string, name: string, socket: ClientSocket): Promise<void> {
     // 同一玩家重复入队：直接忽略
     if (this.waiting.some(w => w.playerId === playerId)) return
@@ -138,10 +138,10 @@ export class MatchService {
       return
     }
 
-    await this.startDirectMatch(
-      { playerId: foe.playerId, name: foe.name, socket: foe.socket },
-      { playerId, name, socket },
-    )
+    // 随机先后手：掷硬币决定谁执红先行（房间模式不变，房主执红）
+    const seeker = { playerId, name, socket }
+    const [red, blue] = Math.random() < 0.5 ? [foe, seeker] : [seeker, foe]
+    await this.startDirectMatch(red, blue)
   }
 
   /** 玩家是否在对局中（房间/队列互斥校验用） */

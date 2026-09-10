@@ -238,6 +238,56 @@ describe('RoomService（坐席制）', () => {
     expect(start.youAre).toBe('spectator')
   })
 
+  it('房主换边：红蓝坐席昵称互换，再换回来', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+
+    const swap1 = service.swapSeats(roomId, 'p1')
+    expect(swap1.ok).toBe(true)
+    let state = hostSock.last('room:state') as { redName: string; blueName: string | null }
+    expect(state.redName).toBe('客人')
+    expect(state.blueName).toBe('小明')
+
+    const swap2 = service.swapSeats(roomId, 'p1')
+    expect(swap2.ok).toBe(true)
+    state = hostSock.last('room:state') as { redName: string; blueName: string | null }
+    expect(state.redName).toBe('小明')
+    expect(state.blueName).toBe('客人')
+  })
+
+  it('换边后开局：挑战者执红先行（房主选后手）', async () => {
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+    expect(service.swapSeats(roomId, 'p1').ok).toBe(true)
+
+    const start = await service.startGame(roomId, 'p1')
+    expect(start.ok).toBe(true)
+    expect(match.started).toHaveLength(1)
+    expect(match.started[0].red.playerId).toBe('p2')
+    expect(match.started[0].blue.playerId).toBe('p1')
+  })
+
+  it('非房主换边被拒', async () => {
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+    expect(service.swapSeats(roomId, 'p2')).toEqual({ ok: false, error: 'not_host' })
+  })
+
+  it('对局中不可换边', async () => {
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+    await service.startGame(roomId, 'p1')
+    expect(service.swapSeats(roomId, 'p1')).toEqual({ ok: false, error: 'match_running' })
+  })
+
   it('主动转让房主：座位互换，新旧房主身份对调', async () => {
     const { res } = create()
     if (!res.ok) return

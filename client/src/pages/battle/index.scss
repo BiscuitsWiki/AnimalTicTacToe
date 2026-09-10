@@ -343,13 +343,13 @@
     transition: border-color 0.2s, background 0.2s;
 
     &--red {
-      background: #fdf1ef;
-      border-color: #eab6b0;
+      background: #f9dcd7;
+      border-color: #e5a49b;
     }
 
     &--blue {
-      background: #eef3fc;
-      border-color: #b6c8ea;
+      background: #dce7fa;
+      border-color: #a8bfe6;
     }
 
     /* 双方最新一手：阵营色描边 + 角标 */
@@ -376,27 +376,6 @@
       }
     }
 
-    /* 已选棋子的不可落格：右下角灰×小徽章（不遮底色，阵营色完整可见） */
-    &--blocked {
-      &::after {
-        content: '×';
-        position: absolute;
-        right: 8px;
-        bottom: 8px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 36px;
-        height: 36px;
-        border-radius: 50%;
-        background: rgba(120, 116, 108, 0.78);
-        color: #fff;
-        font-size: 26px;
-        line-height: 1;
-        pointer-events: none;
-        z-index: 3;
-      }
-    }
   }
 
   /* 最新一手角标（"红"/"蓝" 小标） */

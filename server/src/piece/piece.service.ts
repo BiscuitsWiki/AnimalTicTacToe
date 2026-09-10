@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma.service.js'
+import { ContentSecurityService } from './content-security.service.js'
 
 /** 18 属性白名单（与前端 core/elements.ts 保持一致） */
 const ELEMENTS = new Set([
@@ -20,9 +21,12 @@ export const REPORT_REASONS = new Set([
 
 @Injectable()
 export class PieceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly sec: ContentSecurityService,
+  ) {}
 
-  /** 提交创作棋子（进入待审核） */
+  /** 提交创作棋子（进入待审核；配置腾讯云密钥时先机器送检，Block 直接拒绝） */
   async submit(dto: { name: string; element: string; imageUrl: string; authorId?: string }) {
     const name = dto.name?.trim() ?? ''
     if (name.length === 0 || name.length > NAME_MAX_LEN) {
@@ -34,6 +38,16 @@ export class PieceService {
     if (!dto.imageUrl) {
       throw new BadRequestException('缺少棋子图片')
     }
+    if (!/^\/uploads\//.test(dto.imageUrl)) {
+      throw new BadRequestException('图片地址非法')
+    }
+
+    // 机器初审（fail-open：未配置/异常放行，管理后台人工兜底）
+    const verdict = await this.sec.checkPieceImage(dto.imageUrl)
+    if (verdict.verdict === 'block') {
+      throw new BadRequestException(`图片内容不合规（${verdict.label}），请更换图片`)
+    }
+
     return this.prisma.piece.create({
       data: {
         name,

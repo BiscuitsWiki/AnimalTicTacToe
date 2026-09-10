@@ -124,6 +124,12 @@
 
 * 跳过与平局改版（2026-09-09 二次）：① 新增跳过操作——轮到行动时状态栏"跳过"按钮（game:skip 事件，人机本地结算/联机服务端裁决），不落子不消耗手牌、正常换边抽牌；待胜期守方跳过 = 放弃阻断，三连方直接获胜；② 平局逻辑重写——board_full 改为"九格全部叠满 8 层且无三连"（原"棋盘下满即平"移除），新增 both_skip"双方连续跳过"平局（A 跳过后 B 紧跟着跳过；任意一方落子即重置计数继续对局）；③ 移除 no_moves 自动平局——无处可落时由玩家自行跳过（人机模式 AI 无合法落子自动跳过）；④ MatchState 新增 lastSkipped 字段（落子重置），PlaceEvent 新增 skipped 事件（战报文案"X跳过了本回合"），棋谱记录 type=skip；⑤ 历史战绩平局原因文案更新（棋盘叠满/双方连续跳过），旧记录 no_moves 文案兼容。
 
+* 匹配随机先后手与对局 UI 微调（2026-09-11）：① 匹配撮合改为掷硬币随机分配红蓝（原"先入队者执红先行"），match:started 的 youAre 随机下发，客户端文案不变；② 选中手牌后不可落格不再做任何置灰提示（仅可落格绿虚线）；③ 红/蓝格子底色与边框加深一档；④ 修复 pvp"再来一局"——从"恢复对局"入口进入的对局结束后，再点"再来一局"被误判为"恢复未命中"而退回主菜单，现正常重新进入匹配队列（startPvpMatch 增加主动重开标记）。
+
+* 房间换边选先后手（2026-09-11 二次）：① Room 模型解耦"房主/挑战者"与"红/蓝坐席"——新增 swapped 标记（默认房主红方先手），坐席映射 seatMember(red/blue) 按标记取成员；room:state 视图新增 redName/blueName（坐席卡按阵营渲染，房主标签跟所有权）；② 新增 room:swap 事件（game.gateway）：仅房主、仅 waiting 阶段可换边，对局中拒绝（match_running）；③ 开局 startGame 与观战转播（中途加入/重进恢复）红蓝均按坐席映射，房主换边后挑战者执红先行；④ 转让房主（主动/自动）时 swapped 一并取反——所有权转移但双方坐席颜色不变；⑤ 大厅房主按钮区新增"换边"（开始对局/换边/转让房主），换边失败 toast。服务端单测 29 → 33 例（新增换边/换边后开局/非房主拒绝/对局中拒绝），WS 端到端冒烟 6 项断言通过（默认房主红方→换边→双方视角同步→开局 youAre 互换）。
+
+* 工坊机器初审与管理员密钥修复（2026-09-11 三次）：① 原计划的微信 imgSecCheck 已停服（1.0 于 2021-09 停更、官方 2025-10 确认不可用），替代接口 mediaCheckAsync 强依赖 openid+消息推送回调（H5 游客玩家无 openid 走不通），改用腾讯云图片审核 ImageModeration；② 新增 ContentSecurityService（piece 模块）：TC3-HMAC-SHA256 签名直调（node:crypto 零 SDK 依赖），submit 时读 uploads 本地文件 base64 送检（不依赖公网 URL，本地/公网通用）；Suggestion=Block → 400 拒绝并回传违规标签（客户端 toast 展示），Pass/Review → 正常 pending；③ fail-open 设计：未配置密钥/接口异常（8s 超时）→ skip 放行进 pending，管理后台人工兜底；④ 安全加固：submit 增加 imageUrl 必须以 /uploads/ 开头校验（400 图片地址非法），送检路径白名单仅接受 uuid+png/jpg/webp 文件名（防路径穿越任意文件送检）；⑤ 环境变量 TENCENT_SECRET_ID/TENCENT_SECRET_KEY（.env.example 已注释模板，不配置即跳过检测）；⑥ 修复本地 dev ADMIN_TOKEN 15 字符不达标（<16 拒绝鉴权）→ dev-admin-token-1234567890 并验证 /admin/stats 200。服务端单测 33 → 39 例（新增内容安全 6 例：未配置 skip/白名单路径/Block 标签/Pass/异常 fail-open/TC3 请求头签名格式）。
+
 1. 待办与下一步方向
 
 * P4.1 + P4.2 坐席制房间与观战已完成（2026-08-30）：RoomService 坐席制模型（房主红方坐席/挑战者蓝方坐席/观战席上限 20、TTL 2h 回收、互斥校验）+ WS 事件 room:create/join/leave/start/host:transfer + 房间大厅（坐席卡/开始对局/转让房主/观战人数/复制邀请）+ 链接直达加入 + 观战只读视图（手牌脱敏、中途加入立即挂载）+ 终局回 waiting 可反复开局 + 房主主动/自动转让。单测 16 例、WS 冒烟与浏览器三端 e2e 验证通过。注意：WsAdapter 应答为裸 JSON 无事件信封，房间结果改用 room:created / room:joined 等带信封推送。待 P4.3 小程序分享卡片。

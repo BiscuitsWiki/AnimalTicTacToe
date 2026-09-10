@@ -1,6 +1,6 @@
 /**
  * P4.1 房间服务：坐席制好友约战房间（内存表）。
- * 坐席：房主（红方坐席）+ 一位挑战者（蓝方坐席）；其余加入者进观战席。
+ * 坐席：房主 + 一位挑战者，阵营由 swapped 标记决定（默认房主红方，房主可换边选先后手）；其余加入者进观战席。
  * 生命周期：创建(waiting) → 双方入座 → 房主点"开始对局"(playing) → 终局回 waiting（可反复开局）。
  * 房主退出（主动/断线）时所有权自动转让给另一位坐席玩家；无坐席玩家则解散房间。
  * TTL 2 小时无活动自动回收（可用 ROOM_TTL_MS 覆盖）。
@@ -25,10 +25,14 @@ export type JoinRole = 'host' | 'guest' | 'spectator'
 export interface RoomStateView {
   roomId: string
   phase: 'waiting' | 'playing'
-  /** 红方坐席（房主）昵称 */
+  /** 房主昵称（所有权：开始对局/换边/转让） */
   hostName: string
-  /** 蓝方坐席昵称（未入座为 null） */
+  /** 挑战者昵称（未入座为 null） */
   guestName: string | null
+  /** 红方坐席昵称（随换边变化） */
+  redName: string
+  /** 蓝方坐席昵称（未入座为 null） */
+  blueName: string | null
   spectatorCount: number
 }
 
@@ -44,10 +48,12 @@ interface RoomMember {
 
 interface Room {
   roomId: string
-  /** 红方坐席 = 房主 */
+  /** 房主（所有权持有者） */
   host: RoomMember
-  /** 蓝方坐席（挑战者） */
+  /** 挑战者坐席 */
   guest: RoomMember | null
+  /** 坐席换边标记：true = 房主执蓝（后手）、挑战者执红（先手） */
+  swapped: boolean
   /** 观战席 */
   spectators: RoomMember[]
   phase: 'waiting' | 'playing'
@@ -91,6 +97,7 @@ export class RoomService implements OnModuleInit {
       roomId,
       host: { playerId, name, socket },
       guest: null,
+      swapped: false,
       spectators: [],
       phase: 'waiting',
       matchId: null,
@@ -148,14 +155,14 @@ export class RoomService implements OnModuleInit {
       this.matchService.attachSpectators(room.matchId, [{ name, socket }])
       this.push(socket, 'match:started', {
         youAre: 'spectator',
-        redName: room.host.name,
-        blueName: room.guest?.name ?? '对手',
+        redName: this.seatName(room, 'red'),
+        blueName: this.seatName(room, 'blue'),
       })
     }
     return { ok: true, data: { role: 'spectator', room: this.viewOf(room) } }
   }
 
-  /** 开始对局：仅房主可发起，蓝方坐席须已入座，未在对局中。 */
+  /** 开始对局：仅房主可发起，蓝方坐席须已入座，未在对局中；红蓝坐席按 swapped 映射。 */
   async startGame(roomId: string, playerId: string): Promise<RoomResult> {
     const room = this.rooms.get(roomId)
     if (!room) return { ok: false, error: 'room_not_found' }
@@ -163,11 +170,11 @@ export class RoomService implements OnModuleInit {
     if (room.phase === 'playing') return { ok: false, error: 'match_running' }
     if (!room.guest) return { ok: false, error: 'no_guest' }
 
-    const host = room.host
-    const guest = room.guest
+    const red = room.swapped ? room.guest : room.host
+    const blue = room.swapped ? room.host : room.guest
     const matchId = await this.matchService.startDirectMatch(
-      { playerId: host.playerId, name: host.name, socket: host.socket },
-      { playerId: guest.playerId, name: guest.name, socket: guest.socket },
+      { playerId: red.playerId, name: red.name, socket: red.socket },
+      { playerId: blue.playerId, name: blue.name, socket: blue.socket },
     )
     room.phase = 'playing'
     room.matchId = matchId
@@ -182,17 +189,31 @@ export class RoomService implements OnModuleInit {
       for (const s of room.spectators) {
         this.push(s.socket, 'match:started', {
           youAre: 'spectator',
-          redName: host.name,
-          blueName: guest.name,
+          redName: red.name,
+          blueName: blue.name,
         })
       }
     }
-    this.logger.log(`room ${roomId}: match started by host`)
+    this.logger.log(`room ${roomId}: match started by host (red=${red.name})`)
     this.broadcastState(room)
     return { ok: true }
   }
 
-  /** 转让房主：仅房主可发起，仅等待阶段可转让（对局中转让会打乱坐席阵营），转让给蓝方坐席玩家（座位互换）。 */
+  /** 换边：仅房主可发起，仅等待阶段（选择先后手）；对局中换边会打乱阵营，拒绝。 */
+  swapSeats(roomId: string, playerId: string): RoomResult {
+    const room = this.rooms.get(roomId)
+    if (!room) return { ok: false, error: 'room_not_found' }
+    if (room.host.playerId !== playerId) return { ok: false, error: 'not_host' }
+    if (room.phase === 'playing') return { ok: false, error: 'match_running' }
+
+    room.swapped = !room.swapped
+    this.refreshTtl(room)
+    this.logger.log(`room ${roomId}: seats swapped (host is now ${room.swapped ? 'blue' : 'red'})`)
+    this.broadcastState(room)
+    return { ok: true }
+  }
+
+  /** 转让房主：仅房主可发起，仅等待阶段可转让，转让给挑战者；swapped 一并取反（坐席颜色不随所有权移动）。 */
   transferHost(roomId: string, playerId: string): RoomResult {
     const room = this.rooms.get(roomId)
     if (!room) return { ok: false, error: 'room_not_found' }
@@ -203,6 +224,7 @@ export class RoomService implements OnModuleInit {
     const oldHost = room.host
     room.host = room.guest
     room.guest = oldHost
+    room.swapped = !room.swapped
     this.logger.log(`room ${roomId}: host transferred to ${room.host.name}`)
     this.broadcastState(room)
     return { ok: true }
@@ -223,6 +245,7 @@ export class RoomService implements OnModuleInit {
         const newHost = room.guest
         room.host = newHost
         room.guest = null
+        room.swapped = !room.swapped   // 所有权转移，坐席颜色保持不变
         this.playerRoom.delete(oldHost.playerId)   // 旧房主离场
         this.logger.log(`room ${room.roomId}: host left, host transferred to ${newHost.name}`)
         this.broadcastState(room)
@@ -298,8 +321,8 @@ export class RoomService implements OnModuleInit {
           // 补发观战开局事件，驱动客户端进入观战界面
           this.push(socket, 'match:started', {
             youAre: 'spectator',
-            redName: room.host.name,
-            blueName: room.guest?.name ?? '对手',
+            redName: this.seatName(room, 'red'),
+            blueName: this.seatName(room, 'blue'),
           })
         }
       }
@@ -336,12 +359,25 @@ export class RoomService implements OnModuleInit {
 
   // ---------- 内部 ----------
 
+  /** 按阵营取坐席成员（swapped：房主执蓝、挑战者执红） */
+  private seatMember(room: Room, side: 'red' | 'blue'): RoomMember | null {
+    if (side === 'red') return room.swapped ? room.guest : room.host
+    return room.swapped ? room.host : room.guest
+  }
+
+  /** 按阵营取坐席昵称（空坐席给占位名） */
+  private seatName(room: Room, side: 'red' | 'blue'): string {
+    return this.seatMember(room, side)?.name ?? '对手'
+  }
+
   private viewOf(room: Room): RoomStateView {
     return {
       roomId: room.roomId,
       phase: room.phase,
       hostName: room.host.name,
       guestName: room.guest?.name ?? null,
+      redName: this.seatMember(room, 'red')?.name ?? '',
+      blueName: this.seatMember(room, 'blue')?.name ?? null,
       spectatorCount: room.spectators.length,
     }
   }
