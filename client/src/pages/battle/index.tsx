@@ -13,6 +13,7 @@ import type { DeckSource } from '../../services/deckSource'
 import { REPORT_REASONS, reportAiResult, reportPiece } from '../../services/api'
 import { GameSocket } from '../../services/ws'
 import { ensureLogin, getAuthUser, getToken, getUserId } from '../../services/auth'
+import { lastMarks } from './marks'
 import './index.scss'
 
 type BattleMode = 'ai' | 'pvp' | 'room'
@@ -906,8 +907,7 @@ export default function Battle () {
           const top = cell.stack[cell.stack.length - 1]
           const side = topSide(cell)
           const canDrop = highlightCells.includes(idx)
-          const isLastRed = match.lastPlaced.red === idx
-          const isLastBlue = match.lastPlaced.blue === idx
+          const { isLastRed, isLastBlue, lastBoth } = lastMarks(match.lastPlaced, idx)
           return (
             <View
               key={idx}
@@ -918,12 +918,17 @@ export default function Battle () {
                 canDrop ? 'board__cell--ok' : '',
                 isLastRed ? 'board__cell--last-red' : '',
                 isLastBlue ? 'board__cell--last-blue' : '',
+                lastBoth ? 'board__cell--last-both' : '',
               ].join(' ')}
               onClick={() => onCellTap(idx)}
               onLongPress={() => top && onPieceLongPress(top.piece)}
             >
               {isLastRed && <View className='board__last-tag board__last-tag--red'><Text>红最近</Text></View>}
-              {isLastBlue && <View className='board__last-tag board__last-tag--blue'><Text>蓝最近</Text></View>}
+              {isLastBlue && (
+                <View className={`board__last-tag board__last-tag--blue ${lastBoth ? 'board__last-tag--offset' : ''}`}>
+                  <Text>蓝最近</Text>
+                </View>
+              )}
               {top && (
                 <View className='piece' style={`border-color: ${ELEMENT_COLORS[top.piece.element]}`}>
                   <Text

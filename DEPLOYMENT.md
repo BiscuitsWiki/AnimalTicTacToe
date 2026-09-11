@@ -119,19 +119,84 @@ docker run --rm --network host -v /opt/att:/app -w /app node:22-alpine \
 
 ## 六、日常运维
 
-### 更新版本
+### 当前生产环境（实测信息）
+
+| 项 | 值 |
+| -- | -- |
+| 服务器 | 腾讯云 `ubuntu@182.254.221.57`（Ubuntu 24.04，SSH 密码登录） |
+| 公网入口 | `http://182.254.221.57:8080`（宿主 80 被占，`.env` 设 `WEB_PORT=8080`） |
+| 部署目录 | `/opt/att`（属主 root，解压必须 `sudo tar`） |
+| Compose 项目名 | `att`（数据卷 `att_server_data` / `att_server_uploads`） |
+| `.env` 位置 | `/opt/att/.env`（`ADMIN_TOKEN` + `TENCENT_SECRET_ID/KEY`，不在 git 内） |
+
+### 更新 Runbook（下令「更新公网」时按此执行）
+
+> **分工**：助手执行本机命令（预检 / 提交推送打包 / 验收脚本）；**scp 上传与服务器命令需用户手动执行**（密码交互），助手逐步给出命令并核对输出。
+> **触发口令**：用户说「更新公网」「部署更新」→ 从第 0 步开始走。
+
+#### 第 0 步：预检（助手，本机）
+
+- 双端单测全绿、H5 生产构建通过
+- `git status` 确认无未提交改动——**`git archive` 只含已提交代码**，未提交的改动不会进包（踩过：新文件没 commit 导致服务器上找不到）
+
+#### 第 1 步：提交、推送、打包（助手，本机 PowerShell 项目根目录）
 
 ```powershell
-# 本地（项目根目录）：提交改动后导出并上传
+git add -A
+git commit -m "<本次发布说明>"
+git push
 git archive --format=tar.gz -o att.tar.gz HEAD
-scp att.tar.gz root@<服务器IP>:/opt/
 ```
 
-```bash
-# 服务器：覆盖解压并重建（数据在卷里，不会丢；方式 B 克隆的则改为 git pull）
-cd /opt/att && tar -xzf /opt/att.tar.gz -C /opt/att
-docker compose -p att up -d --build
+#### 第 2 步：上传（用户执行，需输密码）
+
+```powershell
+C:\Windows\System32\OpenSSH\scp.exe att.tar.gz ubuntu@182.254.221.57:~/
 ```
+
+- **必须传到家目录 `~/`**：`/opt` 归 root，ubuntu 无权写入（scp 到 `/opt` 会 `Permission denied`——踩过）
+- 用完整路径 `C:\Windows\System32\OpenSSH\scp.exe`：部分 PowerShell 会话 PATH 中无 scp
+- 看到进度条走完 `100%` 才算成功
+
+#### 第 3 步：服务器解压 + 重建（用户执行）
+
+```bash
+ls -lh ~/att.tar.gz                                    # ① 时间戳应为今天（确认新包）
+sudo tar -xzf ~/att.tar.gz -C /opt/att                 # ② 解压（必须 sudo）
+# ③ 新代码标志验证：按本次改动 grep 关键标识（函数名/新文件），均应 ≥1
+cd /opt/att && sudo docker compose -p att up -d --build --force-recreate   # ④ 重建（真实编译需几分钟）
+sudo docker compose -p att ps                          # ⑤ CREATED 应为 "xx minutes ago"
+```
+
+要点：
+
+- `--force-recreate` 必加：镜像未变时 `up` 只显示 Running 空转，容器不会换新（踩过）
+- `Built 0.x 秒` = 全命中缓存 → 很可能代码没进来，回 ② 检查解压
+- **改了 Prisma schema 无需手动迁移**：容器启动命令自动 `prisma db push`（无损加列）
+- **改了 docker-compose.yml 时注意**：`environment:` 是白名单制，`.env` 里的变量必须显式列进 `environment` 才会注入容器（踩过：TENCENT 密钥在 .env 里但没进容器）
+- 服务器上写 `.env` 等多行操作**拆成单条 `echo ... | sudo tee -a`**，避免 SSH 断线打断 heredoc 产生重复/残缺行（踩过）；写完 `sudo grep <KEY> /opt/att/.env` 验证；`.env` 变更后 `up -d --force-recreate` 生效（不必 --build），用 `exec server printenv` 复核
+
+#### 第 4 步：验收（助手，本机）
+
+```powershell
+node acceptance.mjs http://182.254.221.57:8080
+```
+
+期望最后一行 `全部通过，部署验收成功。`；随后按需手动过新功能（浏览器 `Ctrl+F5` 强刷）。
+
+#### 回滚
+
+本机导出上一提交重传，重复第 2~4 步（数据卷不受影响）：
+
+```powershell
+git archive --format=tar.gz -o att.tar.gz HEAD~1
+```
+
+#### 已知副作用
+
+- 更新会中断进行中对局（几十秒停机窗口），避开正在玩的时间
+- acceptance 的 WS 匹配测试会在数据库留一条测试战绩（断线超时判负记录）
+- tar.gz 每次覆盖 `/opt/att`，但 `.env` 与数据卷都在包外，不会被动
 
 ### 数据备份（建议加 cron）
 

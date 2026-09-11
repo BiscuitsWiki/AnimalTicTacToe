@@ -228,6 +228,30 @@ describe('落子与叠放占领', () => {
   })
 })
 
+describe('最近一手标记（盖子场景）', () => {
+  it('盖住对方最近一手：双方 lastPlaced 同格（lastBoth 双标记渲染的状态基础）', () => {
+    const s = makeState(['grass', 'fire'], ['fire'])
+    place(s, 'red', 0, 4)    // red grass 落空格 4
+    place(s, 'blue', 0, 4)   // blue fire 克制 grass 盖上
+    expect(s.lastPlaced).toEqual({ red: 4, blue: 4 })
+  })
+
+  it('同格交锋后一方落向他处：标记分离', () => {
+    const s = makeState(['grass', 'fire'], ['fire'])
+    place(s, 'red', 0, 4)
+    place(s, 'blue', 0, 4)
+    place(s, 'red', 0, 0)    // red 用剩余 fire 落空格 0
+    expect(s.lastPlaced).toEqual({ red: 0, blue: 4 })
+  })
+
+  it('跳过不移动标记', () => {
+    const s = makeState(['fire'], ['water'])
+    place(s, 'red', 0, 4)
+    skip(s, 'blue')
+    expect(s.lastPlaced).toEqual({ red: 4, blue: null })
+  })
+})
+
 describe('待胜阻断', () => {
   /** 红蓝交替各落 3 子，red 在 0,1,2 成三连（fire），blue 在 3,4 落 water */
   function makePendingWin(): MatchState {
