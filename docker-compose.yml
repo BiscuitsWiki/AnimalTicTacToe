@@ -22,6 +22,9 @@ services:
     environment:
       DATABASE_URL: file:/app/data/app.db
       ADMIN_TOKEN: ${ADMIN_TOKEN:?请在 .env 中设置 ADMIN_TOKEN（运营后台登录密钥）}
+      # 腾讯云图片审核（工坊机器初审）；.env 未配置则传空 → 服务自动跳过检测
+      TENCENT_SECRET_ID: ${TENCENT_SECRET_ID:-}
+      TENCENT_SECRET_KEY: ${TENCENT_SECRET_KEY:-}
       PORT: 3000
     # 3000 不映射到宿主机：仅 compose 内网供 web 容器反代（expose 仅作声明）
     expose:
