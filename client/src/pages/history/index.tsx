@@ -1,11 +1,11 @@
 /**
- * 战绩页（P6 数据落库）：胜负平统计卡 + 最近对局列表。
+ * 战绩页（P6 数据落库）：胜负平统计卡（真人/人机分开）+ 模式筛选 + 最近对局列表。
  */
 import { useEffect, useState } from 'react'
 import { View, Text } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { fetchHistory, fetchStats } from '../../services/api'
-import type { HistoryItem, PlayerStats } from '../../services/api'
+import type { HistoryItem, ModeStats, PlayerStats } from '../../services/api'
 import { ensureLogin } from '../../services/auth'
 import './index.scss'
 
@@ -15,6 +15,7 @@ const reasonText = (r: string) =>
   r === 'board_full' ? '棋盘叠满' :
   r === 'both_skip' ? '双方连续跳过' :
   r === 'no_moves' ? '无处可落' :
+  r === 'resign' ? '认输' :
   r === 'opponent_disconnect' ? '对手超时未归' : r
 
 /** 相对时间：刚刚 / N 分钟前 / N 小时前 / M月D日 */
@@ -29,12 +30,43 @@ function timeAgo(iso: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`
 }
 
+/** 筛选维度：全部 / 真人 / 人机 */
+type ModeFilter = 'all' | 'pvp' | 'ai'
+
+/** 单模式统计行（模式标签 + 胜负平 + 胜率） */
+function ModeSummaryRow ({ label, s }: { label: string; s: ModeStats }) {
+  return (
+    <View className='history__summary-row'>
+      <Text className='history__summary-mode'>{label}</Text>
+      <View className='history__summary-item'>
+        <Text className='history__summary-num history__summary-num--win'>{s.wins}</Text>
+        <Text className='history__summary-label'>胜</Text>
+      </View>
+      <View className='history__summary-item'>
+        <Text className='history__summary-num'>{s.losses}</Text>
+        <Text className='history__summary-label'>负</Text>
+      </View>
+      <View className='history__summary-item'>
+        <Text className='history__summary-num'>{s.draws}</Text>
+        <Text className='history__summary-label'>平</Text>
+      </View>
+      <View className='history__summary-item'>
+        <Text className='history__summary-num history__summary-num--rate'>
+          {s.total > 0 ? Math.round((s.wins / s.total) * 100) : 0}%
+        </Text>
+        <Text className='history__summary-label'>胜率</Text>
+      </View>
+    </View>
+  )
+}
+
 export default function History () {
   const [stats, setStats] = useState<PlayerStats | null>(null)
   const [items, setItems] = useState<HistoryItem[] | null>(null)
   const [failed, setFailed] = useState(false)
+  const [filter, setFilter] = useState<ModeFilter>('all')
 
-  const load = async () => {
+  const load = async (f: ModeFilter) => {
     const user = await ensureLogin()
     if (!user) {
       setFailed(true)
@@ -43,7 +75,7 @@ export default function History () {
     try {
       const [s, h] = await Promise.all([
         fetchStats(user.id),
-        fetchHistory(user.id, 20),
+        fetchHistory(user.id, 20, f === 'all' ? undefined : f),
       ])
       setStats(s)
       setItems(h.items)
@@ -52,8 +84,15 @@ export default function History () {
     }
   }
 
-  useDidShow(() => { load() })
-  useEffect(() => { load() }, [])
+  const switchFilter = (f: ModeFilter) => {
+    if (f === filter) return
+    setFilter(f)
+    setItems(null)
+    load(f)
+  }
+
+  useDidShow(() => { load(filter) })
+  useEffect(() => { load('all') }, [])
 
   return (
     <View className='history'>
@@ -67,24 +106,26 @@ export default function History () {
 
       {!failed && stats && (
         <View className='history__summary'>
-          <View className='history__summary-item'>
-            <Text className='history__summary-num history__summary-num--win'>{stats.wins}</Text>
-            <Text className='history__summary-label'>胜</Text>
-          </View>
-          <View className='history__summary-item'>
-            <Text className='history__summary-num'>{stats.losses}</Text>
-            <Text className='history__summary-label'>负</Text>
-          </View>
-          <View className='history__summary-item'>
-            <Text className='history__summary-num'>{stats.draws}</Text>
-            <Text className='history__summary-label'>平</Text>
-          </View>
-          <View className='history__summary-item'>
-            <Text className='history__summary-num history__summary-num--rate'>
-              {stats.total > 0 ? Math.round((stats.wins / stats.total) * 100) : 0}%
-            </Text>
-            <Text className='history__summary-label'>胜率</Text>
-          </View>
+          <ModeSummaryRow label='真人' s={stats.pvp} />
+          <ModeSummaryRow label='人机' s={stats.ai} />
+        </View>
+      )}
+
+      {!failed && (
+        <View className='history__filters'>
+          {([
+            ['all', '全部'],
+            ['pvp', '真人'],
+            ['ai', '人机'],
+          ] as [ModeFilter, string][]).map(([value, label]) => (
+            <View
+              key={value}
+              className={`history__filter ${filter === value ? 'history__filter--on' : ''}`}
+              onClick={() => switchFilter(value)}
+            >
+              <Text>{label}</Text>
+            </View>
+          ))}
         </View>
       )}
 
@@ -106,7 +147,7 @@ export default function History () {
                   对手：{m.opponentName}
                 </Text>
                 <Text className='history__item-meta'>
-                  {m.mySide === 'red' ? '红方' : '蓝方'} · {reasonText(m.reason)} · {timeAgo(m.endedAt)}
+                  {m.mode === 'ai' ? '人机' : '真人'} · {m.mySide === 'red' ? '红方' : '蓝方'} · {reasonText(m.reason)} · {timeAgo(m.endedAt)}
                 </Text>
               </View>
             </View>

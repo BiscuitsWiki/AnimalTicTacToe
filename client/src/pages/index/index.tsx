@@ -3,7 +3,7 @@ import { View, Text, Input } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { fetchStats } from '../../services/api'
 import type { PlayerStats } from '../../services/api'
-import { ensureLogin, getToken, getUserId } from '../../services/auth'
+import { ensureLogin, getToken, getUserId, updateNickname, randomNickname } from '../../services/auth'
 import { GameSocket } from '../../services/ws'
 import './index.scss'
 
@@ -16,6 +16,9 @@ export default function Index () {
   /** 加入房间弹层：是否显示 / 输入的房间码 */
   const [joinOpen, setJoinOpen] = useState(false)
   const [roomCode, setRoomCode] = useState('')
+  /** 改名弹层：是否显示 / 输入的昵称 */
+  const [nickOpen, setNickOpen] = useState(false)
+  const [nickInput, setNickInput] = useState('')
 
   // 每次回到主菜单刷新战绩（对局结束返回后能看到最新数据）
   useDidShow(() => {
@@ -101,11 +104,58 @@ export default function Index () {
     Taro.navigateTo({ url: `/pages/battle/index?mode=room&role=join&room=${code}` })
   }
 
+  /** 打开改名弹层（预填当前昵称） */
+  const openNick = () => {
+    setNickInput(nickname)
+    setNickOpen(true)
+  }
+
+  /** 提交改名（1~12 字符，服务端校验） */
+  const confirmNick = async () => {
+    const name = nickInput.trim()
+    if (name.length < 1 || name.length > 12) {
+      Taro.showToast({ title: '昵称需 1~12 个字符', icon: 'none' })
+      return
+    }
+    if (name === nickname) {
+      setNickOpen(false)
+      return
+    }
+    try {
+      const user = await updateNickname(name)
+      setNickname(user.nickname)
+      setNickOpen(false)
+      Taro.showToast({ title: '已更新', icon: 'success' })
+    } catch (err) {
+      Taro.showToast({ title: err instanceof Error ? err.message : '修改失败', icon: 'none' })
+    }
+  }
+
+  /** 一键换随机昵称（可连点挑选，词表与服务端默认名同款） */
+  const applyRandomNick = async () => {
+    try {
+      const user = await updateNickname(randomNickname())
+      setNickname(user.nickname)
+    } catch (err) {
+      Taro.showToast({ title: err instanceof Error ? err.message : '修改失败', icon: 'none' })
+    }
+  }
+
   return (
     <View className='menu'>
       <View className='menu__title'>
-        <Text className='menu__title-main'>动物井字棋</Text>
+        <Text className='menu__title-main'>精灵井字棋</Text>
         <Text className='menu__title-sub'>属性克制 · 叠放占领 · 待胜阻断</Text>
+      </View>
+
+      {/* 昵称栏：点名称编辑，右侧随机按钮一键换名 */}
+      <View className='menu__nick'>
+        <View className='menu__nick-name' onClick={openNick}>
+          <Text>{nickname || '游客'}</Text>
+        </View>
+        <View className='menu__nick-edit' onClick={applyRandomNick}>
+          <Text>随机</Text>
+        </View>
       </View>
 
       <View className='menu__actions'>
@@ -155,20 +205,62 @@ export default function Index () {
         </View>
       )}
 
-      {stats && stats.total > 0 && (
+      {/* 改名弹层 */}
+      {nickOpen && (
+        <View className='mask' onClick={() => setNickOpen(false)}>
+          <View className='mask__panel' onClick={e => e.stopPropagation()}>
+            <Text className='mask__title'>修改昵称</Text>
+            <Text className='mask__desc'>1~12 个字符，匹配 / 房间对战中将展示此昵称</Text>
+            <Input
+              className='mask__input'
+              type='text'
+              maxlength={12}
+              value={nickInput}
+              placeholder='如：勇敢的小狐狸'
+              onInput={e => setNickInput(String(e.detail.value))}
+            />
+            <View className='mask__actions'>
+              <View className='menu__btn menu__btn--workshop mask__btn' onClick={() => setNickOpen(false)}>
+                <Text>取消</Text>
+              </View>
+              <View className='menu__btn menu__btn--primary mask__btn' onClick={confirmNick}>
+                <Text>保存</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {stats && (stats.pvp.total > 0 || stats.ai.total > 0) && (
         <View className='menu__stats' onClick={goHistory}>
           <Text className='menu__stats-title'>{nickname ? `${nickname} · ` : ''}我的战绩（点击查看历史对局）</Text>
           <View className='menu__stats-row'>
+            <Text className='menu__stats-mode'>真人</Text>
             <View className='menu__stats-item'>
-              <Text className='menu__stats-num menu__stats-num--win'>{stats.wins}</Text>
+              <Text className='menu__stats-num menu__stats-num--win'>{stats.pvp.wins}</Text>
               <Text className='menu__stats-label'>胜</Text>
             </View>
             <View className='menu__stats-item'>
-              <Text className='menu__stats-num'>{stats.losses}</Text>
+              <Text className='menu__stats-num'>{stats.pvp.losses}</Text>
               <Text className='menu__stats-label'>负</Text>
             </View>
             <View className='menu__stats-item'>
-              <Text className='menu__stats-num'>{stats.draws}</Text>
+              <Text className='menu__stats-num'>{stats.pvp.draws}</Text>
+              <Text className='menu__stats-label'>平</Text>
+            </View>
+          </View>
+          <View className='menu__stats-row'>
+            <Text className='menu__stats-mode'>人机</Text>
+            <View className='menu__stats-item'>
+              <Text className='menu__stats-num menu__stats-num--win'>{stats.ai.wins}</Text>
+              <Text className='menu__stats-label'>胜</Text>
+            </View>
+            <View className='menu__stats-item'>
+              <Text className='menu__stats-num'>{stats.ai.losses}</Text>
+              <Text className='menu__stats-label'>负</Text>
+            </View>
+            <View className='menu__stats-item'>
+              <Text className='menu__stats-num'>{stats.ai.draws}</Text>
               <Text className='menu__stats-label'>平</Text>
             </View>
           </View>

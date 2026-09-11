@@ -24,9 +24,11 @@
     }
   }
 
-  /* 统计卡 */
+  /* 统计卡（真人/人机两行） */
   &__summary {
     display: flex;
+    flex-direction: column;
+    gap: 24px;
     width: 100%;
     max-width: 600px;
     margin-top: 32px;
@@ -34,6 +36,24 @@
     border-radius: 24px;
     background: #fff;
     border: 3px solid #e5dfd3;
+  }
+
+  &__summary-row {
+    display: flex;
+    align-items: center;
+    padding: 0 32px;
+  }
+
+  &__summary-mode {
+    flex-shrink: 0;
+    width: 88px;
+    font-size: 24px;
+    color: #8a7a66;
+    background: rgba(233, 223, 209, 0.6);
+    border-radius: 999px;
+    padding: 8px 0;
+    text-align: center;
+    margin-right: 24px;
   }
 
   &__summary-item {
@@ -45,7 +65,7 @@
   }
 
   &__summary-num {
-    font-size: 52px;
+    font-size: 44px;
     font-weight: bold;
     color: #3a3a3a;
     line-height: 1.1;
@@ -62,6 +82,36 @@
   &__summary-label {
     font-size: 24px;
     color: #8a8175;
+  }
+
+  /* 模式筛选 tab */
+  &__filters {
+    display: flex;
+    gap: 20px;
+    width: 100%;
+    max-width: 600px;
+    margin-top: 28px;
+  }
+
+  &__filter {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 60px;
+    border-radius: 999px;
+    background: #ece7dd;
+    color: #8a8175;
+    font-size: 26px;
+
+    &--on {
+      background: #6b6357;
+      color: #fff;
+    }
+
+    &:active {
+      opacity: 0.85;
+    }
   }
 
   &__empty {

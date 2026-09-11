@@ -150,12 +150,17 @@ await check('工坊已上架列表 /pieces/approved', async () => {
   return `${r.json.length} 个棋子卡`
 })
 
-await check('战绩统计 /game/stats/:id', async () => {
+await check('战绩统计 /game/stats/:id（真人/人机分桶）', async () => {
   const r = await http('GET', `/game/stats/acceptance-${runId}`)
   assert(r.status === 200, `期望 200，实际 ${r.status}`)
-  const keys = ['playerId', 'wins', 'losses', 'draws', 'total']
-  for (const k of keys) assert(k in (r.json ?? {}), `响应缺少字段 ${k}`)
-  return `total=${r.json.total}`
+  for (const bucket of ['pvp', 'ai']) {
+    const b = r.json?.[bucket]
+    assert(b != null && typeof b === 'object', `响应缺少 ${bucket} 桶`)
+    for (const k of ['wins', 'losses', 'draws', 'total']) {
+      assert(k in b, `${bucket} 桶缺少字段 ${k}`)
+    }
+  }
+  return `pvp=${r.json.pvp.total} ai=${r.json.ai.total}`
 })
 
 await check('历史对局 /game/history/:id', async () => {

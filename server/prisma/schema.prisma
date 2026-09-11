@@ -50,8 +50,10 @@ model Match {
   blueName     String
   // 'red' | 'blue' | 'draw'
   winnerSide   String
-  // 'line' | 'board_full' | 'opponent_disconnect'
+  // 'line' | 'board_full' | 'both_skip' | 'resign' | 'opponent_disconnect'
   reason       String
+  // 'pvp'（匹配/房间真人局）| 'ai'（人机局，客户端上报）
+  mode         String   @default("pvp")
   createdAt    DateTime           // 开局时间
   endedAt      DateTime @default(now())
 

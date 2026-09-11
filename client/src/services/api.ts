@@ -133,13 +133,21 @@ export function fetchApprovedPieces(): Promise<ApiPiece[]> {
   return getJSON<ApiPiece[]>('/pieces/approved?limit=100')
 }
 
-/** 个人战绩（P2.3：基于已落库的对局记录） */
-export interface PlayerStats {
-  playerId: string
+/** 单模式胜负平小计 */
+export interface ModeStats {
   wins: number
   losses: number
   draws: number
   total: number
+}
+
+/** 个人战绩（P2.3：基于已落库的对局记录；真人对战与人机分开统计） */
+export interface PlayerStats {
+  playerId: string
+  /** 真人对战（匹配 + 房间） */
+  pvp: ModeStats
+  /** 人机对战 */
+  ai: ModeStats
 }
 
 export function fetchStats(playerId: string): Promise<PlayerStats> {
@@ -157,15 +165,33 @@ export interface HistoryItem {
   result: 'win' | 'lose' | 'draw'
   /** 结束原因：line=三连 board_full=平 opponent_disconnect=对手超时未归 */
   reason: string
+  /** 对局模式：pvp=真人 ai=人机 */
+  mode: string
   /** 结束时间（ISO 字符串） */
   endedAt: string
 }
 
-/** 最近对局列表（默认 20 条，上限 50） */
-export function fetchHistory(playerId: string, limit = 20): Promise<{ items: HistoryItem[] }> {
+/** 最近对局列表（默认 20 条，上限 50；mode=pvp|ai 过滤，缺省全部） */
+export function fetchHistory(
+  playerId: string,
+  limit = 20,
+  mode?: 'pvp' | 'ai',
+): Promise<{ items: HistoryItem[] }> {
+  const q = mode ? `?limit=${limit}&mode=${mode}` : `?limit=${limit}`
   return getJSON<{ items: HistoryItem[] }>(
-    `/game/history/${encodeURIComponent(playerId)}?limit=${limit}`,
+    `/game/history/${encodeURIComponent(playerId)}${q}`,
   )
+}
+
+/** 人机对局结果上报（本地结算 → 落库统计） */
+export function reportAiResult(payload: {
+  playerId: string
+  playerName: string
+  mySide: 'red' | 'blue'
+  winnerSide: 'red' | 'blue' | 'draw'
+  reason: string
+}): Promise<{ ok: boolean; matchId: string }> {
+  return postJSON('/game/ai-result', payload)
 }
 
 /** 举报理由（与服务端白名单一致） */

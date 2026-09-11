@@ -109,6 +109,17 @@ export async function updateNickname(nickname: string): Promise<AuthUser> {
   return cachedUser
 }
 
+/** 随机昵称词表（与服务端 guest 默认名同款） */
+const NICKNAME_ADJECTIVES = ['机灵的', '勇敢的', '神秘的', '欢快的', '沉稳的', '悠闲的']
+const NICKNAME_ANIMALS = ['小狐狸', '小柴犬', '橘猫', '兔兔', '小熊', '水獭', '鹦鹉', '刺猬']
+
+/** 生成随机昵称（本地拼接，不走接口） */
+export function randomNickname(): string {
+  const a = NICKNAME_ADJECTIVES[Math.floor(Math.random() * NICKNAME_ADJECTIVES.length)]
+  const b = NICKNAME_ANIMALS[Math.floor(Math.random() * NICKNAME_ANIMALS.length)]
+  return a + b
+}
+
 /** 小程序微信登录（需服务端配置 WX_APPID / WX_SECRET） */
 export async function wechatLogin(): Promise<AuthUser> {
   const { code } = await Taro.login()

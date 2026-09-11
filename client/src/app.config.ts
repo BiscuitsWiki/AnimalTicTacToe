@@ -8,7 +8,7 @@ export default defineAppConfig({
   window: {
     backgroundTextStyle: 'light',
     navigationBarBackgroundColor: '#fff',
-    navigationBarTitleText: '动物井字棋',
+    navigationBarTitleText: '精灵井字棋',
     navigationBarTextStyle: 'black'
   }
 })

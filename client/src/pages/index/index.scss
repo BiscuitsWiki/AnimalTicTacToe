@@ -28,6 +28,46 @@
     }
   }
 
+  /* 昵称栏：点名称编辑，右侧随机按钮一键换名 */
+  &__nick {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 40px;
+    padding: 16px 28px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.66);
+
+    &-name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 28px;
+      color: #4a4036;
+      font-weight: 500;
+      border-bottom: 2px dashed #c9b9a4;
+
+      &:active {
+        opacity: 0.7;
+      }
+    }
+
+    &-edit {
+      flex-shrink: 0;
+      font-size: 24px;
+      color: #8a7a66;
+      border: 2px dashed #c9b9a4;
+      border-radius: 999px;
+      padding: 6px 20px;
+
+      &:active {
+        opacity: 0.7;
+      }
+    }
+  }
+
   &__actions {
     width: 100%;
     display: flex;
@@ -103,6 +143,21 @@
       display: flex;
       align-items: center;
       gap: 72px;
+
+      & + & {
+        margin-top: 16px;
+      }
+    }
+
+    &-mode {
+      flex-shrink: 0;
+      width: 64px;
+      font-size: 24px;
+      color: #8a7a66;
+      background: rgba(233, 223, 209, 0.6);
+      border-radius: 999px;
+      padding: 6px 0;
+      text-align: center;
     }
 
     &-item {

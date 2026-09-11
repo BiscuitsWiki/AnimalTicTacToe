@@ -10,9 +10,9 @@ import { STACK_LIMIT } from '../../core/types'
 import type { MatchState, PlaceEvent, Side } from '../../core/types'
 import { buildDeckFromServer } from '../../services/deckSource'
 import type { DeckSource } from '../../services/deckSource'
-import { REPORT_REASONS, reportPiece } from '../../services/api'
+import { REPORT_REASONS, reportAiResult, reportPiece } from '../../services/api'
 import { GameSocket } from '../../services/ws'
-import { ensureLogin, getToken, getUserId } from '../../services/auth'
+import { ensureLogin, getAuthUser, getToken, getUserId } from '../../services/auth'
 import './index.scss'
 
 type BattleMode = 'ai' | 'pvp' | 'room'
@@ -108,6 +108,8 @@ export default function Battle () {
   const sockRef = useRef<GameSocket | null>(null)
   /** 对局已结束（含超时判负）标记：停止自动重连 */
   const endedRef = useRef(false)
+  /** 人机终局上报标记：每局只报一次（"再来一局"时重置） */
+  const aiReportedRef = useRef(false)
   /** 重连代际号：restart/unload 时递增使旧重试链失效 */
   const genRef = useRef(0)
   /** 举报面板：正在举报的棋子（棋盘/手牌上的顶层棋子） */
@@ -252,6 +254,7 @@ export default function Battle () {
     setMatch(matchFrom(src))
     setMySide('red')
     setLog(['对局开始，红方先行'])
+    aiReportedRef.current = false   // 新一局：重置上报标记
   }
 
   /** 取消匹配：退出队列、断开连接、返回上级菜单 */
@@ -472,11 +475,11 @@ export default function Battle () {
   useShareAppMessage(() => {
     if (mode === 'room' && roomId) {
       return {
-        title: `来下动物井字棋！房间码 ${roomId}`,
+        title: `来下精灵井字棋！房间码 ${roomId}`,
         path: `/pages/battle/index?mode=room&role=join&room=${roomId}`,
       }
     }
-    return { title: '动物井字棋', path: '/pages/index/index' }
+    return { title: '精灵井字棋', path: '/pages/index/index' }
   })
 
   // myRole 变化同步到 ref（socket 回调读取最新值）
@@ -518,6 +521,24 @@ export default function Battle () {
     }, 700)
     return () => clearTimeout(timer)
   }, [match, mode])
+
+  /**
+   * 人机终局上报：本地结算结果落库（mode='ai'，与真人对战分开统计）。
+   * 每局只报一次；未登录或服务不可达时静默放弃（离线人机可玩，战绩丢失可接受）。
+   */
+  useEffect(() => {
+    if (mode !== 'ai' || !match?.result || aiReportedRef.current) return
+    aiReportedRef.current = true
+    const user = getAuthUser()
+    if (!user) return
+    reportAiResult({
+      playerId: user.id,
+      playerName: user.nickname,
+      mySide,
+      winnerSide: match.result.winner,
+      reason: match.result.reason,
+    }).catch(() => { /* 静默：上报失败不干扰对局体验 */ })
+  }, [match, mode, mySide])
 
   const onSelectCard = (idx: number) => {
     if (!match || !myTurn || match.phase !== 'TURN_ACTION') return
