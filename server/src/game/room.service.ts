@@ -232,14 +232,31 @@ export class RoomService implements OnModuleInit {
 
   /**
    * 退出房间（room:leave 或断线）。
+   * 优先按 socket 定位成员；socket 未命中（客户端重连后引用过期等）时按 playerId 兜底。
    * 房主退出：有坐席玩家 → 所有权自动转让；无 → 解散房间并通知全员。
    */
-  leaveRoom(socket: ClientSocket): void {
-    const room = this.roomOfSocket(socket)
-    if (!room) return
+  leaveRoom(socket: ClientSocket, playerId?: string): void {
+    let room = this.roomOfSocket(socket)
+    let member: 'host' | 'guest' | 'spectator' | null = null
+    if (room) {
+      if (room.host.socket === socket) member = 'host'
+      else if (room.guest?.socket === socket) member = 'guest'
+      else if (room.spectators.some(s => s.socket === socket)) member = 'spectator'
+    }
+    // socket 未命中但携带身份：按 playerId 兜底（重连后 socket 引用与房间记录不一致的场景）
+    if (!room && playerId) {
+      const rid = this.playerRoom.get(playerId)
+      const r = rid ? this.rooms.get(rid) : undefined
+      if (r) {
+        if (r.host.playerId === playerId) { room = r; member = 'host' }
+        else if (r.guest?.playerId === playerId) { room = r; member = 'guest' }
+        else if (r.spectators.some(s => s.playerId === playerId)) { room = r; member = 'spectator' }
+      }
+    }
+    if (!room || !member) return
     this.refreshTtl(room)
 
-    if (room.host.socket === socket) {
+    if (member === 'host') {
       if (room.guest) {
         const oldHost = room.host
         const newHost = room.guest
@@ -255,14 +272,14 @@ export class RoomService implements OnModuleInit {
       return
     }
 
-    if (room.guest?.socket === socket) {
+    if (member === 'guest' && room.guest) {
       this.playerRoom.delete(room.guest.playerId)
       room.guest = null
       this.broadcastState(room)
       return
     }
 
-    const idx = room.spectators.findIndex(s => s.socket === socket)
+    const idx = room.spectators.findIndex(s => (playerId ? s.playerId === playerId : s.socket === socket))
     if (idx >= 0) {
       this.playerRoom.delete(room.spectators[idx].playerId)
       room.spectators.splice(idx, 1)

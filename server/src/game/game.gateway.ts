@@ -172,9 +172,12 @@ export class GameGateway {
     return { ok: true }
   }
 
+  /** 退出房间：优先按 socket 定位；携带 token/playerId 时可兜底（客户端重连后 socket 引用过期） */
   @SubscribeMessage('room:leave')
-  onRoomLeave(client: WebSocket) {
-    this.roomService.leaveRoom(client)
+  async onRoomLeave(client: WebSocket, data: { token?: string; playerId?: string }) {
+    const user = await this.auth.verifyTokenOrNull(data?.token)
+    const playerId = user?.id ?? (data?.playerId ? String(data.playerId).slice(0, 64) : undefined)
+    this.roomService.leaveRoom(client, playerId)
     return { ok: true }
   }
 }

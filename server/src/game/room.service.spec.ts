@@ -355,6 +355,57 @@ describe('RoomService（坐席制）', () => {
     expect(service.isPlayerInRoom('p2')).toBe(false)
   })
 
+  it('坐席玩家退出（socket 未命中，按 playerId 兜底）：坐席清空，房间保留', async () => {
+    // 场景：客户端对局中重连后 sockRef 指向旧死 socket，room:leave 携带身份仍可退出
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+
+    const deadSock = new FakeSocket()   // 未绑定任何房间成员的 socket
+    service.leaveRoom(deadSock as never, 'p2')
+    expect(service.roomCount).toBe(1)
+    expect(service.isPlayerInRoom('p2')).toBe(false)
+    expect(service.isPlayerInRoom('p1')).toBe(true)
+  })
+
+  it('房主退出（socket 未命中，按 playerId 兜底）：所有权自动转让', async () => {
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    const { sock: guestSock } = await seatGuest(roomId)
+
+    service.leaveRoom(new FakeSocket() as never, 'p1')
+    expect(service.roomCount).toBe(1)
+    expect(service.isPlayerInRoom('p1')).toBe(false)
+    const state = guestSock.last('room:state') as { hostName: string; guestName: string | null }
+    expect(state.hostName).toBe('客人')
+  })
+
+  it('观战者退出（socket 未命中，按 playerId 兜底）：观战人数减少', async () => {
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+    await seatGuest(roomId, 'p3', '路人')
+
+    service.leaveRoom(new FakeSocket() as never, 'p3')
+    expect(service.roomCount).toBe(1)
+    expect(service.isPlayerInRoom('p3')).toBe(false)
+  })
+
+  it('退出（socket 与 playerId 均未命中）：无副作用', async () => {
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+
+    service.leaveRoom(new FakeSocket() as never, 'px')
+    expect(service.roomCount).toBe(1)
+    expect(service.isPlayerInRoom('p1')).toBe(true)
+    expect(service.isPlayerInRoom('p2')).toBe(true)
+  })
+
   it('观战者退出：观战人数减少', async () => {
     const { res } = create()
     if (!res.ok) return

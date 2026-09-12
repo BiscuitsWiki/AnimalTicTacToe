@@ -185,6 +185,8 @@ export default function Battle () {
     let settled = false
     socket.on('match:reconnected', (d: { youAre: Side; opponentName: string }) => {
       settled = true
+      // 重连成功：同步 sockRef，否则 exitRoom/换边/转让等操作仍发往旧死 socket（房间退不出的根因）
+      sockRef.current = socket
       if (pvpRef.current) {
         pvpRef.current.socket = socket
         pvpRef.current.youAre = d.youAre
@@ -298,7 +300,7 @@ export default function Battle () {
       socket.close()
       setWaiting(false)
       setLog(['未找到进行中的对局'])
-      Taro.navigateBack()
+      goBackToMenu()
       return
     }
 
@@ -621,6 +623,12 @@ export default function Battle () {
     }
   }
 
+  /** 返回主菜单：页面栈非空走 navigateBack；直链/刷新进入时 battle 是栈根，兜底 reLaunch */
+  const goBackToMenu = () => {
+    if (Taro.getCurrentPages().length > 1) Taro.navigateBack()
+    else Taro.reLaunch({ url: '/pages/index/index' })
+  }
+
   /** 终局退出：断开连接返回主菜单 */
   const quitToMenu = () => {
     genRef.current++
@@ -629,16 +637,20 @@ export default function Battle () {
     pvpRef.current = null
     sockRef.current?.close()
     sockRef.current = null
-    Taro.navigateBack()
+    goBackToMenu()
   }
 
-  /** 房主取消等待返回 */
+  /** 退出房间：正常换边重连/对局后返回等待页均可退出，带身份兜底（服务端 socket 未命中时按 playerId 移除） */
   const exitRoom = () => {
     genRef.current++
-    sockRef.current?.send('room:leave', {})
+    endedRef.current = true   // 阻断 socket 关闭触发的自动重连
+    sockRef.current?.send('room:leave', { token: getToken(), playerId: getUserId() })
     sockRef.current?.close()
     sockRef.current = null
-    Taro.navigateBack()
+    // 对局后回到等待页的场景：pvpRef 可能仍持有（重连后的）活 socket，一并关闭触发服务端离场
+    pvpRef.current?.socket.close()
+    pvpRef.current = null
+    goBackToMenu()
   }
 
   /** 房主开始对局（蓝方坐席入座后可点） */
@@ -847,7 +859,7 @@ export default function Battle () {
                 : '牌堆组建中…'}
         </Text>
         {connLost ? (
-          <View className='battle__back' onClick={() => Taro.navigateBack()}>
+          <View className='battle__back' onClick={goBackToMenu}>
             <Text>返回</Text>
           </View>
         ) : ended && mode === 'pvp' ? (
@@ -944,7 +956,7 @@ export default function Battle () {
                 <View
                   className={`board__stack-count ${cell.stack.length >= STACK_LIMIT ? 'board__stack-count--full' : ''}`}
                 >
-                  <Text>×{cell.stack.length}</Text>
+                  <Text>{cell.stack.length}/{STACK_LIMIT}</Text>
                 </View>
               )}
             </View>

@@ -409,14 +409,14 @@
     }
   }
 
-  /* 叠放层数徽章（×N，满 8 层标红提示不可再叠） */
+  /* 叠放层数徽章（N/8，满层标红提示不可再叠，未满灰色） */
   &__stack-count {
     position: absolute;
     top: 8px;
     right: 8px;
-    padding: 2px 12px;
+    padding: 2px 10px;
     border-radius: 999px;
-    background: rgba(143, 134, 118, 0.85);
+    background: rgba(122, 117, 108, 0.88);
     font-size: 20px;
     color: #fff;
 
