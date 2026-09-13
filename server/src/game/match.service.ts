@@ -194,6 +194,7 @@ export class MatchService {
     this.playerRoom.set(blue.playerId, roomId)
 
     this.logger.log(`match ${roomId} started: ${red.name}(red) vs ${blue.name}(blue)`)
+    this.armTurnTimer(room)   // 开局：红方回合计时（先起表再发视角，首帧即带 turnDeadline）
     for (const p of room.players) {
       this.push(p.socket, 'match:started', {
         matchId: roomId,
@@ -202,7 +203,6 @@ export class MatchService {
       })
       this.sendView(room, p, [])
     }
-    this.armTurnTimer(room)   // 开局：红方回合计时
     return roomId
   }
 
@@ -234,8 +234,7 @@ export class MatchService {
       youAre: player.side,
       opponentName: foe.name,
     })
-    // 断线期间回合计时暂停：恢复计时并向双方补发视角（刷新倒计时截止）
-    this.armTurnTimer(room)
+    // 回合计时未中断：直接补发视角（携带当前剩余截止时间），不重新起表
     this.sendView(room, player, [])
     this.sendView(room, foe, [])
     this.push(foe.socket, 'opponent:reconnected', {})
@@ -259,12 +258,12 @@ export class MatchService {
           this.record(room, e.side, 'deal', { count: e.pieces.length })
         }
       }
-      this.broadcast(room, events)
       if (room.state.result) {
         this.endMatch(room, room.state.result.winner, room.state.result.reason)
       } else {
-        this.armTurnTimer(room)   // 换边：对手回合计时
+        this.armTurnTimer(room)   // 先起表：广播视角携带新回合截止时间（客户端倒计时重置）
       }
+      this.broadcast(room, events)
     } catch {
       this.sendView(room, player, [])   // 非法落子：回推纠偏（同一回合，计时继续）
     }
@@ -288,12 +287,12 @@ export class MatchService {
           this.record(room, e.side, 'deal', { count: e.pieces.length })
         }
       }
-      this.broadcast(room, events)
       if (room.state.result) {
         this.endMatch(room, room.state.result.winner, room.state.result.reason)
       } else {
-        this.armTurnTimer(room)   // 换边：对手回合计时
+        this.armTurnTimer(room)   // 先起表：广播视角携带新回合截止时间（客户端倒计时重置）
       }
+      this.broadcast(room, events)
     } catch {
       this.sendView(room, player, [])   // 非法跳过（已终局等）：回推纠偏
     }
@@ -340,9 +339,8 @@ export class MatchService {
       return
     }
 
-    // 宽限期：不立即判负，等待重连；回合计时暂停（避免断线方被自动跳过、对局空转）
+    // 宽限期：不立即判负，等待重连；回合计时继续走（断线方超时同样自动跳过，防拖时间）
     quitter.socket = null
-    this.clearTurnTimer(room)
     const stayer = room.players.find(p => p.side !== quitter.side)!
     this.logger.warn(`match ${room.matchId}: ${quitter.name} disconnected (grace ${RECONNECT_GRACE_MS}ms)`)
     this.push(stayer.socket, 'opponent:disconnected', { graceMs: RECONNECT_GRACE_MS })
@@ -472,14 +470,14 @@ export class MatchService {
           this.record(room, e.side, 'deal', { count: e.pieces.length })
         }
       }
-      this.broadcast(room, events)
       // skip() 会原地修改 state（可能产生终局），显式重读绕过入口卫兵的类型收窄
       const result = room.state.result as MatchResult | null
       if (result) {
         this.endMatch(room, result.winner, result.reason)
       } else {
-        this.armTurnTimer(room)
+        this.armTurnTimer(room)   // 先起表：广播视角携带新回合截止时间
       }
+      this.broadcast(room, events)
     } catch {
       // 状态异常（非行动阶段等）：不再重试
     }

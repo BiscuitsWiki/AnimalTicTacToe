@@ -63,6 +63,13 @@ describe('MatchService 回合倒计时', () => {
     vi.useRealTimers()
   })
 
+  it('开局首帧即带倒计时：match:started 后第一条 game:state 的 turnDeadline 为数字（第一手可见倒计时）', async () => {
+    const { red } = await startGame()
+    const first = red.views()[0]
+    expect(first).toBeTruthy()
+    expect(typeof first.turnDeadline).toBe('number')
+  })
+
   it('超时自动跳过：红方 50ms 无行动 → skipped(timeout) 广播 + 换边蓝方 + turnDeadline 下发', async () => {
     const { service, red, blue } = await startGame()
     expect(service.isPlayerInMatch('r')).toBe(true)
@@ -81,8 +88,14 @@ describe('MatchService 回合倒计时', () => {
 
   it('行动重置计时：红方及时落子 → 其计时器被取消，首个超时跳过的是蓝方', async () => {
     const { service, red, blue } = await startGame()
-    service.applyPlace(red, 0, 0)   // 红方立即落子（50ms 内）
+    const before = blue.last<ClientView>('game:state')!.turnDeadline!
+    vi.advanceTimersByTime(20)       // 消耗部分回合时间
+    service.applyPlace(red, 0, 0)   // 红方 20ms 时落子（50ms 内）
     expect(blue.last<ClientView>('game:state')!.state.turnSide).toBe('blue')
+
+    // 换边视角携带的新截止时间应基于落子时刻重新起表（晚于旧截止）
+    const after = blue.last<ClientView>('game:state')!.turnDeadline!
+    expect(after).toBeGreaterThan(before)
 
     vi.advanceTimersByTime(50)      // 蓝方回合超时
 
@@ -121,22 +134,30 @@ describe('MatchService 回合倒计时', () => {
     expect(ended.result.reason).toBe('line')
   })
 
-  it('断线宽限期暂停计时：超时窗口内无 skipped；重连后恢复计时', async () => {
+  it('断线期间回合计时继续：断线方超时被自动跳过；重连不重置剩余时间', async () => {
     const { service, red, blue } = await startGame()
     service.handleDisconnect(red)
     expect(blue.last('opponent:disconnected')).toBeTruthy()
 
-    vi.advanceTimersByTime(500)   // 宽限期内（默认 60s）：不产生任何自动跳过
-    expect([...blue.views()].flatMap(v => v.events).some(e => e.type === 'skipped')).toBe(false)
-    expect(blue.last<ClientView>('game:state')!.state.turnSide).toBe('red')
+    vi.advanceTimersByTime(50)   // 断线方（红）回合超时：照常自动跳过
+    const view = blue.last<ClientView>('game:state')!
+    expect(view.state.turnSide).toBe('blue')
+    expect(view.events[0]).toMatchObject({ type: 'skipped', side: 'red', timeout: true })
+    expect(typeof view.turnDeadline).toBe('number')   // 蓝方回合计时照常下发
 
-    // 重连：恢复回合计时（重连方红方仍为行动方）
+    // 重连：不重新起表（蓝方剩余时间继续走，deadline 不变）
+    const blueDeadline = view.turnDeadline!
     const red2 = new FakeSocket()
     expect(service.reconnect(red2, 'r')).toBe(true)
     expect(red2.last('match:reconnected')).toBeTruthy()
-    vi.advanceTimersByTime(50)
-    const view = red2.last<ClientView>('game:state')!
-    expect(view.state.turnSide).toBe('blue')
-    expect(view.events[0]).toMatchObject({ type: 'skipped', side: 'red', timeout: true })
+    const reconnected = red2.last<ClientView>('game:state')!
+    expect(reconnected.turnDeadline).toBe(blueDeadline)
+
+    // 重连后蓝方正常落子：换边红方并下发新回合计时（对局继续）
+    service.applyPlace(blue, 0, 0)
+    const view2 = blue.last<ClientView>('game:state')!
+    expect(view2.state.turnSide).toBe('red')
+    expect(view2.events[0]).toMatchObject({ type: 'placed', side: 'blue' })
+    expect(typeof view2.turnDeadline).toBe('number')
   })
 })

@@ -130,6 +130,12 @@
       color: #b0a89a;
       font-weight: normal;
     }
+
+    /* 对局结束后未点"返回房间"的坐席：灰色（区别于未入座的浅占位） */
+    &--away {
+      color: #8a8378;
+      font-weight: normal;
+    }
   }
 
   &__seat-tag {
@@ -174,6 +180,23 @@
   &__oppo-name {
     font-size: 26px;
     color: #5a5a5a;
+  }
+
+  /* room 模式房间号独立行（页面最上方，居中胶囊，点击复制房间号） */
+  &__room-bar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    height: 56px;
+    margin-bottom: 12px;
+    border-radius: 999px;
+    background: #f0eae0;
+  }
+
+  &__room-bar-text {
+    font-size: 24px;
+    color: #6b6357;
   }
 
   &__deck {
@@ -299,6 +322,35 @@
 
   &--red {
     background: #e0654a;
+  }
+}
+
+/* 复制图标：两个正方形叠影（前景盖住背景右下角错位方块） */
+.icon-copy {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  color: #6b6357;
+
+  &__back {
+    position: absolute;
+    top: 7px;
+    left: 7px;
+    width: 19px;
+    height: 19px;
+    border: 2px solid currentColor;
+    border-radius: 4px;
+  }
+
+  &__front {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 19px;
+    height: 19px;
+    border: 2px solid currentColor;
+    border-radius: 4px;
+    background: #f0eae0;   /* 与房间号行底色一致，盖住背板形成叠影 */
   }
 }
 

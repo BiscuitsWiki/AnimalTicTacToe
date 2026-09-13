@@ -127,6 +127,20 @@ export class GameGateway {
     return { ok: true }
   }
 
+  /** 对局结束后玩家点"返回房间"：置位坐席返回标记并广播（未返回方大厅灰显） */
+  @SubscribeMessage('room:returned')
+  async onRoomReturned(
+    client: WebSocket,
+    data: { token?: string; playerId?: string },
+  ) {
+    const user = await this.auth.verifyTokenOrNull(data?.token)
+    const playerId = user?.id ?? String(data?.playerId ?? '').slice(0, 64)
+    if (!playerId) return { ok: false, error: 'unauthorized' }
+    const res = this.roomService.markReturned(playerId)
+    client.send(JSON.stringify({ event: 'room:returned', data: res }))
+    return { ok: true }
+  }
+
   /** 房主开始对局 */
   @SubscribeMessage('room:start')
   async onRoomStart(

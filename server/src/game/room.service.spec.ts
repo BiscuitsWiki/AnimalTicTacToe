@@ -473,4 +473,59 @@ describe('RoomService（坐席制）', () => {
     vi.advanceTimersByTime(2 * 60 * 60 * 1000)
     expect(service.roomCount).toBe(0)
   })
+
+  it('对局结束返回标记：终局重置 → 单边返回广播 → 双边返回 → 再次开局重置', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    const { sock: guestSock } = await seatGuest(roomId)
+    const start = await service.startGame(roomId, 'p1')
+    expect(start.ok).toBe(true)
+
+    // 终局：回到 waiting，双方返回标记重置为 false
+    match.fireMatchEnded(match.started[0] ? `m${match.started.length}` : 'm1')
+    // startDirectMatch 返回 m1..mN（fakeMatchService seq），此处取最近一场
+    const state0 = hostSock.last('room:state') as { phase: string; redReturned: boolean; blueReturned: boolean }
+    expect(state0.phase).toBe('waiting')
+    expect(state0.redReturned).toBe(false)
+    expect(state0.blueReturned).toBe(false)
+
+    // 房主先点"返回房间"：redReturned 置位并广播（guest 视角可见）
+    expect(service.markReturned('p1').ok).toBe(true)
+    const state1 = guestSock.last('room:state') as { redReturned: boolean; blueReturned: boolean }
+    expect(state1.redReturned).toBe(true)
+    expect(state1.blueReturned).toBe(false)
+
+    // guest 再返回：双边置位
+    expect(service.markReturned('p2').ok).toBe(true)
+    const state2 = hostSock.last('room:state') as { redReturned: boolean; blueReturned: boolean }
+    expect(state2.redReturned).toBe(true)
+    expect(state2.blueReturned).toBe(true)
+
+    // 再次开局：返回标记重置（灰显语义不延续到下一局）
+    const again = await service.startGame(roomId, 'p1')
+    expect(again.ok).toBe(true)
+    match.fireMatchEnded('m2')
+    const state3 = hostSock.last('room:state') as { redReturned: boolean; blueReturned: boolean }
+    expect(state3.redReturned).toBe(false)
+    expect(state3.blueReturned).toBe(false)
+  })
+
+  it('返回标记边界：观战者/不在房间者无返回语义，对局中拒绝', async () => {
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+    const { sock: specSock } = await seatGuest(roomId, 'p3', '路人')
+
+    // 观战者：not_seated
+    expect(service.markReturned('p3')).toEqual({ ok: false, error: 'not_seated' })
+    // 不在房间
+    expect(service.markReturned('nobody')).toEqual({ ok: false, error: 'not_in_room' })
+
+    // 对局中：match_running
+    await service.startGame(roomId, 'p1')
+    expect(service.markReturned('p1')).toEqual({ ok: false, error: 'match_running' })
+    void specSock
+  })
 })

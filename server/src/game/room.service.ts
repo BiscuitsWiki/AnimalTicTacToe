@@ -34,6 +34,9 @@ export interface RoomStateView {
   /** 蓝方坐席昵称（未入座为 null） */
   blueName: string | null
   spectatorCount: number
+  /** 对局结束后各坐席是否已点"返回房间"（waiting 阶段语义；playing/开局时重置） */
+  redReturned: boolean
+  blueReturned: boolean
 }
 
 export type RoomResult<T = undefined> =
@@ -59,6 +62,9 @@ interface Room {
   phase: 'waiting' | 'playing'
   /** 进行中/最近一场对局 id */
   matchId: string | null
+  /** 对局结束后各坐席是否已点"返回房间"（再次开局时重置） */
+  redReturned: boolean
+  blueReturned: boolean
   createdAt: Date
   /** TTL 回收定时器（每次活动重置） */
   ttlTimer: NodeJS.Timeout
@@ -80,6 +86,8 @@ export class RoomService implements OnModuleInit {
         if (room.matchId === matchId) {
           room.phase = 'waiting'
           room.matchId = null
+          room.redReturned = false   // 对局结束：重置返回标记，等双方点"返回房间"
+          room.blueReturned = false
           this.broadcastState(room)
           this.logger.log(`room ${room.roomId}: match ended, back to waiting`)
         }
@@ -101,6 +109,8 @@ export class RoomService implements OnModuleInit {
       spectators: [],
       phase: 'waiting',
       matchId: null,
+      redReturned: false,
+      blueReturned: false,
       createdAt: new Date(),
       ttlTimer: setTimeout(() => this.dispose(roomId, 'ttl_expired'), ROOM_TTL_MS),
     }
@@ -351,6 +361,21 @@ export class RoomService implements OnModuleInit {
     return { ok: false, error: 'room_not_found' }
   }
 
+  /** 对局结束后玩家点"返回房间"：置位对应坐席的返回标记并广播（客户端据此灰显未返回方） */
+  markReturned(playerId: string): RoomResult {
+    const roomId = this.playerRoom.get(playerId)
+    if (!roomId) return { ok: false, error: 'not_in_room' }
+    const room = this.rooms.get(roomId)
+    if (!room) return { ok: false, error: 'not_in_room' }
+    if (room.phase !== 'waiting') return { ok: false, error: 'match_running' }
+    this.refreshTtl(room)
+    if (this.seatMember(room, 'red')?.playerId === playerId) room.redReturned = true
+    else if (this.seatMember(room, 'blue')?.playerId === playerId) room.blueReturned = true
+    else return { ok: false, error: 'not_seated' }   // 观战者无返回语义
+    this.broadcastState(room)
+    return { ok: true }
+  }
+
   /** 重连后补发房间状态（恢复大厅 UI） */
   resendState(playerId: string, socket: ClientSocket): void {
     const roomId = this.playerRoom.get(playerId)
@@ -396,6 +421,8 @@ export class RoomService implements OnModuleInit {
       redName: this.seatMember(room, 'red')?.name ?? '',
       blueName: this.seatMember(room, 'blue')?.name ?? null,
       spectatorCount: room.spectators.length,
+      redReturned: room.redReturned,
+      blueReturned: room.blueReturned,
     }
   }
 

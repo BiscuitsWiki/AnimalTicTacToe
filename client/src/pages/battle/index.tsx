@@ -31,6 +31,9 @@ interface RoomStateView {
   redName: string
   blueName: string | null
   spectatorCount: number
+  /** 对局结束后各坐席是否已点"返回房间"（未返回方大厅灰显） */
+  redReturned: boolean
+  blueReturned: boolean
 }
 
 interface PvpContext {
@@ -110,6 +113,8 @@ export default function Battle () {
   const [joinError, setJoinError] = useState('')
   /** room 模式：当前房间码（建房成功/入房成功后写入） */
   const [roomId, setRoomId] = useState('')
+  /** room 模式：对局结束后的返回等待（大厅灰显未返回坐席；再次开局/双方都返回时清除） */
+  const [awaitingReturn, setAwaitingReturn] = useState(false)
   const pvpRef = useRef<PvpContext | null>(null)
   /** 当前活跃 socket（等待阶段也持有，卸载时统一关闭） */
   const sockRef = useRef<GameSocket | null>(null)
@@ -165,8 +170,7 @@ export default function Battle () {
       }
     })
     socket.on('opponent:disconnected', () => {
-      // 断线宽限期内服务端暂停回合计时：本地同步清零倒计时
-      setTurnEndsAt(null)
+      // 服务端断线期间回合计时继续：本地保留倒计时（重连后 game:state 刷新）
       pushLog(['对手连接中断，等待对方重连…'])
     })
     socket.on('opponent:reconnected', () => {
@@ -204,9 +208,22 @@ export default function Battle () {
       setConnLost(false)
       pushLog(['已重新连接，对局继续'])
     })
-    socket.on('match:reconnect', (d: { ok: boolean; error?: string }) => {
+    socket.on('match:reconnect', (d: { ok: boolean; error?: string; inRoom?: string }) => {
       if (d?.ok) return
-      // 房间已销毁（宽限期超时被判负等）
+      // room 模式：对局已结束但房间还在（等房主再开局）→ 重进房间大厅，而非终止会话
+      if (mode === 'room' && d?.inRoom) {
+        settled = true
+        sockRef.current = socket
+        setConnLost(false)
+        socket.send('room:join', {
+          roomId: d.inRoom,
+          token: getToken(),
+          playerId: getUserId(),
+          name: getAuthUser()?.nickname ?? '玩家',
+        })
+        return
+      }
+      // 匹配局已销毁（宽限期超时被判负等）
       settled = true
       endedRef.current = true
       socket.close()
@@ -214,6 +231,7 @@ export default function Battle () {
       pushLog(['重连失败：对局已结束（宽限期超时判负）'])
     })
     bindGameEvents(socket)
+    if (mode === 'room') bindRoomEvents(socket)
     socket.send('match:reconnect', { token: getToken(), playerId: getUserId() })
 
     await sleep(RECONNECT_WAIT_MS)
@@ -331,41 +349,56 @@ export default function Battle () {
     })
   }
 
-  /** room 模式（P4.1 坐席制）：建房入座 / 输码或链接加入（入座或观战），房主点开始才开局 */
-  const startRoomMatch = async () => {
-    endedRef.current = false
-    if (role === 'join' && !/^[2-9A-HJ-NP-Z]{6}$/.test(joinRoomId)) {
-      setJoinError('链接无效：缺少房间码')
-      setWaiting(false)
-      return
-    }
-    const user = await ensureLogin()
-    const socket = new GameSocket()
-    try {
-      await socket.connect(undefined, () => {
-        if (pvpRef.current && !endedRef.current) attemptReconnect(++genRef.current)
-      })
-    } catch {
-      setConnLost(true)
-      setWaiting(false)
-      setLog(['无法连接服务器，请确认后端已启动（server: pnpm run start:dev）'])
-      return
-    }
-    sockRef.current = socket
-    bindGameEvents(socket)
+  /** room 模式事件绑定（首次连接与断线重连的新 socket 复用） */
+  const bindRoomEvents = (socket: GameSocket, user?: { nickname?: string } | null) => {
+    // 房间状态变化（坐席/观战人数/房主变更/回合到 waiting）。
+    // 必须在 probeResume 之前注册：刷新恢复对局时服务端 resendState 会立即补发 room:state，
+    // 若监听器在 resumed 短路之后才注册，房间号等房间上下文会丢失。
+    socket.on('room:state', (d: RoomStateView) => {
+      setRoomState(d)
+      // 同步 roomId：刷新恢复对局路径不经过 room:joined，终局回大厅时渲染依赖它
+      if (d.roomId) setRoomId(d.roomId)
+      // 返回等待结束：再次开局（playing）或双方都已返回 → 恢复正常坐席配色
+      if (d.phase === 'playing' || (d.redReturned && d.blueReturned)) setAwaitingReturn(false)
+      // 本端角色随房主变更自动调整（主动转让/退出自动转让后座位互换）
+      const me = user?.nickname ?? getAuthUser()?.nickname ?? '玩家'
+      if (d.hostName === me) {
+        if (myRoleRef.current !== 'host') setMyRole('host')
+      } else if (d.guestName === me) {
+        if (myRoleRef.current !== 'guest') setMyRole('guest')
+      } else if (myRoleRef.current === 'host') {
+        setMyRole('guest')
+      }
+    })
 
-    // room:joined 统一处理（正常加入 / 刷新重进复用）
-    const onRoomJoined = (d: { ok: boolean; data?: { role: RoomRole; room: RoomStateView }; error?: string }) => {
+    // room:joined 统一处理（正常加入 / 刷新重进 / 断线重连后对局已结束的重进，复用）
+    socket.on('room:joined', (d: { ok: boolean; data?: { role: RoomRole; room: RoomStateView }; error?: string }) => {
       if (d.ok && d.data) {
         setMyRole(d.data.role)
         setRoomState(d.data.room)
         setRoomId(d.data.room.roomId)
-        if (d.data.role === 'host') {
-          setLog(['已恢复房间（你是房主）'])
-        } else if (d.data.role === 'guest') {
-          setLog(['已入座，等待房主开始对局…'])
+        setConnLost(false)
+        if (d.data.room.phase === 'playing') {
+          // 房间对局进行中（观战者断线重进）：恢复观战视图，等待视角推送
+          if (d.data.role === 'spectator') setSpectating(true)
+          setWaiting(false)
         } else {
-          setLog(['已进入观战席，等待房主开始对局…'])
+          // 房间等待中：回大厅（覆盖断线期间对局已结束的残留棋盘状态）
+          pvpRef.current = null
+          setMatch(null)
+          setSelected(null)
+          setSpectating(false)
+          setWaiting(true)
+          setLog(['已回到房间大厅'])
+          // 坐席玩家重进大厅即视为已返回（对方大厅不再灰显本坐席）
+          if (d.data.role !== 'spectator') {
+            socket.send('room:returned', { token: getToken(), playerId: getUserId() })
+          }
+        }
+        if (d.data.role === 'host') {
+          pushLog(['已恢复房间（你是房主）'])
+        } else if (d.data.role === 'guest') {
+          pushLog(['已入座，等待房主开始对局…'])
         }
       } else {
         const msg =
@@ -377,21 +410,7 @@ export default function Battle () {
         setJoinError(msg)
         setWaiting(false)
       }
-    }
-
-    // 刷新/重进恢复：命中对局直接续玩；命中房间则重进恢复席位/观战
-    const probe = await probeResume(socket)
-    if (probe.resumed) return
-    if (probe.inRoom) {
-      socket.on('room:joined', onRoomJoined)
-      socket.send('room:join', {
-        roomId: probe.inRoom,
-        token: getToken(),
-        playerId: getUserId(),
-        name: user?.nickname ?? '玩家',
-      })
-      return
-    }
+    })
 
     // 对局开局推送：坐席玩家（红/蓝）或观战者
     socket.on('match:started', (d: { youAre: Side | 'spectator'; opponentName?: string; redName?: string; blueName?: string }) => {
@@ -408,20 +427,6 @@ export default function Battle () {
         setLog([`对局开始！你是${sideNameZh(d.youAre)}，对手：${d.opponentName ?? '对手'}`])
       }
       setWaiting(false)
-    })
-
-    // 房间状态变化（坐席/观战人数/房主变更/回合到 waiting）
-    socket.on('room:state', (d: RoomStateView) => {
-      setRoomState(d)
-      // 本端角色随房主变更自动调整（主动转让/退出自动转让后座位互换）
-      const me = user?.nickname ?? '玩家'
-      if (d.hostName === me) {
-        if (myRoleRef.current !== 'host') setMyRole('host')
-      } else if (d.guestName === me) {
-        if (myRoleRef.current !== 'guest') setMyRole('guest')
-      } else if (myRoleRef.current === 'host') {
-        setMyRole('guest')
-      }
     })
 
     // 转让房主失败提示（非房主操作/蓝方未入座等）
@@ -448,6 +453,45 @@ export default function Battle () {
       if (d.ok) return
       Taro.showToast({ title: d.error === 'no_guest' ? '对方尚未入座' : '暂时无法开始', icon: 'none' })
     })
+  }
+
+  /** room 模式（P4.1 坐席制）：建房入座 / 输码或链接加入（入座或观战），房主点开始才开局 */
+  const startRoomMatch = async () => {
+    endedRef.current = false
+    if (role === 'join' && !/^[2-9A-HJ-NP-Z]{6}$/.test(joinRoomId)) {
+      setJoinError('链接无效：缺少房间码')
+      setWaiting(false)
+      return
+    }
+    const user = await ensureLogin()
+    const socket = new GameSocket()
+    try {
+      await socket.connect(undefined, () => {
+        if (pvpRef.current && !endedRef.current) attemptReconnect(++genRef.current)
+      })
+    } catch {
+      setConnLost(true)
+      setWaiting(false)
+      setLog(['无法连接服务器，请确认后端已启动（server: pnpm run start:dev）'])
+      return
+    }
+    sockRef.current = socket
+    bindGameEvents(socket)
+    // room 事件统一绑定（含 room:state/room:joined/match:started 等，重连与首连复用）
+    bindRoomEvents(socket, user)
+
+    // 刷新/重进恢复：命中对局直接续玩；命中房间则重进恢复席位/观战
+    const probe = await probeResume(socket)
+    if (probe.resumed) return
+    if (probe.inRoom) {
+      socket.send('room:join', {
+        roomId: probe.inRoom,
+        token: getToken(),
+        playerId: getUserId(),
+        name: user?.nickname ?? '玩家',
+      })
+      return
+    }
 
     if (role === 'host') {
       socket.on('room:created', (d: { ok: boolean; data?: { roomId: string }; error?: string }) => {
@@ -466,7 +510,6 @@ export default function Battle () {
         name: user?.nickname ?? '玩家',
       })
     } else {
-      socket.on('room:joined', onRoomJoined)
       socket.send('room:join', {
         roomId: joinRoomId,
         token: getToken(),
@@ -651,6 +694,12 @@ export default function Battle () {
       setSelected(null)
       setSpectating(false)
       setWaiting(true)
+      setAwaitingReturn(true)
+      // 兜底恢复房间码（断线重连恢复对局等路径下 state 可能缺失，避免大厅误显示"正在加入房间"）
+      const rid = roomId || roomState?.roomId || joinRoomId
+      if (rid) setRoomId(rid)
+      // 通知服务端本坐席已返回（对方大厅灰显"未返回"）
+      sockRef.current?.send('room:returned', { token: getToken(), playerId: getUserId() })
       setLog(['对局结束，已回到房间大厅'])
       return
     }
@@ -725,10 +774,11 @@ export default function Battle () {
       .catch(() => {})
   }
 
-  /** 回合倒计时剩余秒数（仅行动阶段显示；超时自动跳过） */
+  /** 回合倒计时剩余秒数（仅行动阶段显示；超时自动跳过）。
+   *  上限钳制到回合时长：服务端 deadline 与本地时钟存在微小偏差，防止刷新后闪现 31 */
   const remainSec = turnEndsAt === null
     ? null
-    : Math.max(0, Math.ceil((turnEndsAt - Date.now()) / 1000))
+    : Math.max(0, Math.min(Math.ceil((turnEndsAt - Date.now()) / 1000), TURN_TIMEOUT_MS / 1000))
   /** 倒计时圆圈展示条件：有截止时间且处于行动阶段 */
   const showTimer = remainSec !== null && !!match && !match.result && match.phase === 'TURN_ACTION'
   /** 剩余 ≤ 1/3（30s 回合即 ≤10s）进入红色警示 */
@@ -805,18 +855,24 @@ export default function Battle () {
       /** 坐席卡按红/蓝坐席昵称渲染（房主换边后随 room:state 互换）；房主标签跟所有权 */
       const redSeated = !!roomState?.redName
       const blueSeated = !!roomState?.blueName
+      /** 大厅渲染用房间码：state 兜底链 roomState / URL 参数，避免断线恢复路径下误显示"正在加入房间" */
+      const lobbyRoomId = roomId || roomState?.roomId || joinRoomId
+      /** 对局结束后的返回等待：坐席已入座但未点"返回房间"时名字灰显 */
+      const redAway = redSeated && awaitingReturn && !roomState?.redReturned
+      const blueAway = blueSeated && awaitingReturn && !roomState?.blueReturned
       return (
         <View className='battle battle--lobby'>
           <Text className='battle__lobby-title'>
-            {roomId ? `房间 ${roomId}` : role === 'host' ? '正在创建房间…' : `正在加入房间 ${joinRoomId}…`}
+            {lobbyRoomId ? `房间 ${lobbyRoomId}` : role === 'host' ? '正在创建房间…' : `正在加入房间 ${joinRoomId}…`}
           </Text>
-          {roomId && (
+          {lobbyRoomId && (
             <>
               <View className='battle__seats'>
                 <View className='battle__seat battle__seat--red'>
                   <Text className='battle__seat-side'>红方坐席（先手）</Text>
-                  <Text className={`battle__seat-name ${redSeated ? '' : 'battle__seat-name--empty'}`}>
+                  <Text className={`battle__seat-name ${redSeated ? '' : 'battle__seat-name--empty'} ${redAway ? 'battle__seat-name--away' : ''}`}>
                     {roomState?.redName || '等待入座…'}
+                    {redAway ? '（未返回）' : ''}
                   </Text>
                   {roomState?.hostName === roomState?.redName && redSeated && (
                     <Text className='battle__seat-tag'>房主</Text>
@@ -824,8 +880,9 @@ export default function Battle () {
                 </View>
                 <View className='battle__seat battle__seat--blue'>
                   <Text className='battle__seat-side'>蓝方坐席（后手）</Text>
-                  <Text className={`battle__seat-name ${blueSeated ? '' : 'battle__seat-name--empty'}`}>
+                  <Text className={`battle__seat-name ${blueSeated ? '' : 'battle__seat-name--empty'} ${blueAway ? 'battle__seat-name--away' : ''}`}>
                     {roomState?.blueName || '等待入座…'}
+                    {blueAway ? '（未返回）' : ''}
                   </Text>
                   {roomState?.hostName === roomState?.blueName && blueSeated && (
                     <Text className='battle__seat-tag'>房主</Text>
@@ -941,6 +998,17 @@ export default function Battle () {
 
   return (
     <View className='battle'>
+      {/* room 模式：房间号独立行（最上方，点击复制） */}
+      {mode === 'room' && roomState && (
+        <View className='battle__room-bar' onClick={() => copyText(roomState.roomId, '房间号已复制')}>
+          <Text className='battle__room-bar-text'>房间 {roomState.roomId}</Text>
+          <View className='icon-copy'>
+            <View className='icon-copy__back' />
+            <View className='icon-copy__front' />
+          </View>
+        </View>
+      )}
+
       {/* 顶栏：对手信息 + 牌堆（观战者显示红蓝双方） */}
       <View className='battle__topbar'>
         {mode === 'ai' && (
