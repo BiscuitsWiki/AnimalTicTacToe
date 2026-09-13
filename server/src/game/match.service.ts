@@ -84,7 +84,7 @@ function hiddenPiece(): Piece {
 const RECONNECT_GRACE_MS = Number(process.env.RECONNECT_GRACE_MS ?? 60_000)
 
 /** 回合超时（毫秒）：当前行动方无操作自动跳过（待胜期守方超时 = 放弃阻断判负） */
-const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS ?? 15_000)
+const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS ?? 30_000)
 
 @Injectable()
 export class MatchService {

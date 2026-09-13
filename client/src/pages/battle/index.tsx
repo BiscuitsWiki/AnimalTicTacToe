@@ -43,7 +43,7 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const RECONNECT_MAX_TRIES = 8
 const RECONNECT_WAIT_MS = 3000
 /** 回合倒计时（毫秒）：超时未行动自动跳过（与服务端 TURN_TIMEOUT_MS 保持一致） */
-const TURN_TIMEOUT_MS = 15_000
+const TURN_TIMEOUT_MS = 30_000
 
 function matchFrom(src: DeckSource): MatchState {
   return createMatch({ deck: src.deck })
@@ -729,9 +729,10 @@ export default function Battle () {
   const remainSec = turnEndsAt === null
     ? null
     : Math.max(0, Math.ceil((turnEndsAt - Date.now()) / 1000))
-  const countdownText = remainSec !== null && match && !match.result && match.phase === 'TURN_ACTION'
-    ? `（${remainSec}s）`
-    : ''
+  /** 倒计时圆圈展示条件：有截止时间且处于行动阶段 */
+  const showTimer = remainSec !== null && !!match && !match.result && match.phase === 'TURN_ACTION'
+  /** 剩余 ≤ 1/3（30s 回合即 ≤10s）进入红色警示 */
+  const timerLow = remainSec !== null && remainSec * 3000 <= TURN_TIMEOUT_MS
 
   const statusText = () => {
     if (connLost && !match?.result) return '连接中断，正在重连…'
@@ -743,16 +744,14 @@ export default function Battle () {
         if (match.result.winner === 'draw') return '平局'
         return `${match.result.winner === 'red' ? specNames.red : specNames.blue}获胜`
       }
-      return `${match.turnSide === 'red' ? specNames.red : specNames.blue}行动中（观战）${countdownText}`
+      return `${match.turnSide === 'red' ? specNames.red : specNames.blue}行动中（观战）`
     }
     if (match.result) {
       if (match.result.winner === 'draw') return '平局'
       return match.result.winner === mySide ? '你赢了！' : '你输了'
     }
-    if (match.turnSide !== mySide) return `${oppoName}思考中…${countdownText}`
-    return selected === null
-      ? `你的回合：选择手牌或跳过${countdownText}`
-      : `请点击棋盘落子${countdownText}`
+    if (match.turnSide !== mySide) return `${oppoName}思考中…`
+    return selected === null ? '你的回合：选择手牌' : '请点击棋盘落子'
   }
 
   const pendingBanner = () => {
@@ -1029,8 +1028,13 @@ export default function Battle () {
         })}
       </View>
 
-      {/* 状态栏 + 跳过/认输入口 */}
+      {/* 状态栏 + 跳过/认输入口（倒计时圆圈独立于状态文本，状态栏行首） */}
       <View className='battle__status'>
+        {showTimer && (
+          <View className={`battle__timer${timerLow ? ' battle__timer--low' : ''}`}>
+            <Text className='battle__timer-num'>{remainSec}</Text>
+          </View>
+        )}
         <Text className='battle__status-text'>{statusText()}</Text>
         {!match.result && !spectating && myTurn && (
           <View className='battle__skip' onClick={handleSkip}>

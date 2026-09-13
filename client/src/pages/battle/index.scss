@@ -219,6 +219,32 @@
     line-height: 1.4;
   }
 
+  /* 回合倒计时圆圈（状态栏行首，独立于状态文本；剩余 ≤1/3 时红色警示） */
+  &__timer {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: 3px solid #b8a98f;
+    background: #f5efe4;
+    color: #6b6357;
+
+    &--low {
+      border-color: #d05048;
+      background: #fdeceb;
+      color: #d05048;
+    }
+  }
+
+  &__timer-num {
+    font-size: 30px;
+    font-weight: bold;
+    color: inherit;
+  }
+
   /* 对局中跳过按钮（状态栏右侧小胶囊，仅本回合行动时显示） */
   &__skip {
     flex-shrink: 0;
