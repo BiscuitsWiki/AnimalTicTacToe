@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
 import { Button, View, Text } from '@tarojs/components'
 import Taro, { useShareAppMessage, useUnload } from '@tarojs/taro'
 import {
@@ -42,6 +42,8 @@ interface PvpContext {
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 const RECONNECT_MAX_TRIES = 8
 const RECONNECT_WAIT_MS = 3000
+/** 回合倒计时（毫秒）：超时未行动自动跳过（与服务端 TURN_TIMEOUT_MS 保持一致） */
+const TURN_TIMEOUT_MS = 15_000
 
 function matchFrom(src: DeckSource): MatchState {
   return createMatch({ deck: src.deck })
@@ -67,7 +69,9 @@ function eventToText(e: PlaceEvent): string {
     case 'resigned':
       return `${sideNameZh(e.side)}认输，${sideNameZh(e.side === 'red' ? 'blue' : 'red')}获胜！`
     case 'skipped':
-      return `${sideNameZh(e.side)}跳过了本回合`
+      return e.timeout
+        ? `${sideNameZh(e.side)}超时未行动，自动跳过`
+        : `${sideNameZh(e.side)}跳过了本回合`
   }
 }
 
@@ -83,6 +87,8 @@ export default function Battle () {
 
   const [match, setMatch] = useState<MatchState | null>(null)
   const [selected, setSelected] = useState<number | null>(null)
+  /** 回合倒计时截止（epoch ms）：联机由服务端 game:state.turnDeadline 下发；人机本地计时 */
+  const [turnEndsAt, setTurnEndsAt] = useState<number | null>(null)
   const [log, setLog] = useState<string[]>(['正在组建牌堆…'])
   const [waiting, setWaiting] = useState(mode !== 'ai')      // pvp：匹配中 / room：大厅（等待开局）
   const [mySide, setMySide] = useState<Side>('red')
@@ -146,8 +152,9 @@ export default function Battle () {
 
   /** 对局过程事件绑定（初始连接与重连 socket 复用） */
   const bindGameEvents = (socket: GameSocket) => {
-    socket.on('game:state', (d: { state: MatchState; events: PlaceEvent[] }) => {
+    socket.on('game:state', (d: { state: MatchState; events: PlaceEvent[]; turnDeadline?: number | null }) => {
       setMatch(d.state)
+      setTurnEndsAt(d.turnDeadline ?? null)
       if (d.state.result) endedRef.current = true
       if (d.events?.length) pushLog(d.events.map(eventToText))
     })
@@ -158,6 +165,8 @@ export default function Battle () {
       }
     })
     socket.on('opponent:disconnected', () => {
+      // 断线宽限期内服务端暂停回合计时：本地同步清零倒计时
+      setTurnEndsAt(null)
       pushLog(['对手连接中断，等待对方重连…'])
     })
     socket.on('opponent:reconnected', () => {
@@ -525,6 +534,41 @@ export default function Battle () {
     return () => clearTimeout(timer)
   }, [match, mode])
 
+  /** 人机模式：本地回合计时（服务端不下发 deadline，红方回合自行起表） */
+  useEffect(() => {
+    if (mode !== 'ai') return
+    if (myTurn && match && match.phase === 'TURN_ACTION') {
+      // 同一回合计时只起一次（match 重建不重置）：已有截止时间则沿用
+      setTurnEndsAt(prev => prev ?? Date.now() + TURN_TIMEOUT_MS)
+    } else {
+      setTurnEndsAt(null)
+    }
+  }, [mode, myTurn, match])
+
+  /** 人机模式：本方回合 15s 无操作自动跳过（联机由服务端权威裁决，客户端不代发） */
+  useEffect(() => {
+    if (mode !== 'ai' || !match || match.result || match.phase !== 'TURN_ACTION' || match.turnSide !== mySide) return
+    const remain = turnEndsAt === null ? TURN_TIMEOUT_MS : Math.max(0, turnEndsAt - Date.now())
+    const timer = setTimeout(() => {
+      const ns = cloneState(match)
+      try {
+        const events = skip(ns, mySide)
+        setMatch(ns)
+        setSelected(null)
+        pushLog(['你的回合超时，自动跳过', ...events.map(eventToText)])
+      } catch { /* 回合已变化：忽略 */ }
+    }, remain)
+    return () => clearTimeout(timer)
+  }, [match, mode, mySide, turnEndsAt])
+
+  /** 倒计时渲染节拍：有截止时间时每 500ms 重算剩余秒数 */
+  const [, rerender] = useReducer((x: number) => x + 1, 0)
+  useEffect(() => {
+    if (turnEndsAt === null) return
+    const timer = setInterval(rerender, 500)
+    return () => clearInterval(timer)
+  }, [turnEndsAt])
+
   /**
    * 人机终局上报：本地结算结果落库（mode='ai'，与真人对战分开统计）。
    * 每局只报一次；未登录或服务不可达时静默放弃（离线人机可玩，战绩丢失可接受）。
@@ -599,6 +643,7 @@ export default function Battle () {
   const restart = () => {
     genRef.current++
     setConnLost(false)
+    setTurnEndsAt(null)
     if (mode === 'room') {
       // 坐席制房间终局不解散：回房间大厅，房主可再次开局
       pvpRef.current = null
@@ -680,6 +725,14 @@ export default function Battle () {
       .catch(() => {})
   }
 
+  /** 回合倒计时剩余秒数（仅行动阶段显示；超时自动跳过） */
+  const remainSec = turnEndsAt === null
+    ? null
+    : Math.max(0, Math.ceil((turnEndsAt - Date.now()) / 1000))
+  const countdownText = remainSec !== null && match && !match.result && match.phase === 'TURN_ACTION'
+    ? `（${remainSec}s）`
+    : ''
+
   const statusText = () => {
     if (connLost && !match?.result) return '连接中断，正在重连…'
     if (connLost) return '连接已断开'
@@ -690,14 +743,16 @@ export default function Battle () {
         if (match.result.winner === 'draw') return '平局'
         return `${match.result.winner === 'red' ? specNames.red : specNames.blue}获胜`
       }
-      return `${match.turnSide === 'red' ? specNames.red : specNames.blue}行动中（观战）`
+      return `${match.turnSide === 'red' ? specNames.red : specNames.blue}行动中（观战）${countdownText}`
     }
     if (match.result) {
       if (match.result.winner === 'draw') return '平局'
       return match.result.winner === mySide ? '你赢了！' : '你输了'
     }
-    if (match.turnSide !== mySide) return `${oppoName}思考中…`
-    return selected === null ? '你的回合：选择手牌或跳过' : '请点击棋盘落子'
+    if (match.turnSide !== mySide) return `${oppoName}思考中…${countdownText}`
+    return selected === null
+      ? `你的回合：选择手牌或跳过${countdownText}`
+      : `请点击棋盘落子${countdownText}`
   }
 
   const pendingBanner = () => {

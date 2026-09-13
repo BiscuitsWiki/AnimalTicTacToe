@@ -52,6 +52,10 @@ export interface GameRoom {
   createdAt: Date
   /** 断线判负定时器（重连成功则取消） */
   forfeitTimer: NodeJS.Timeout | null
+  /** 回合超时定时器（当前行动方 15s 无操作自动跳过；断线宽限期内暂停） */
+  turnTimer: NodeJS.Timeout | null
+  /** 当前回合计时截止时间（epoch ms，随 game:state 下发驱动客户端倒计时） */
+  turnDeadline: number | null
 }
 
 interface WaitingEntry {
@@ -65,6 +69,8 @@ export interface ClientView {
   youAre: Side | 'spectator'
   state: MatchState          // 视角化后：对手手牌/牌堆为等长占位；观战视角双方手牌均隐藏
   events: PlaceEvent[]       // 最近一次动作产生的事件（战报文案用）
+  /** 当前行动方倒计时截止（epoch ms）；非行动阶段/已终局为 null */
+  turnDeadline: number | null
 }
 
 let matchSeq = 0
@@ -76,6 +82,9 @@ function hiddenPiece(): Piece {
 
 /** 断线重连宽限期（毫秒），可用环境变量覆盖（测试期调短） */
 const RECONNECT_GRACE_MS = Number(process.env.RECONNECT_GRACE_MS ?? 60_000)
+
+/** 回合超时（毫秒）：当前行动方无操作自动跳过（待胜期守方超时 = 放弃阻断判负） */
+const TURN_TIMEOUT_MS = Number(process.env.TURN_TIMEOUT_MS ?? 15_000)
 
 @Injectable()
 export class MatchService {
@@ -175,6 +184,8 @@ export class MatchService {
       actions: [],
       createdAt: new Date(),
       forfeitTimer: null,
+      turnTimer: null,
+      turnDeadline: null,
     }
     this.rooms.set(roomId, room)
     this.socketRoom.set(red.socket, { roomId, playerId: red.playerId })
@@ -191,6 +202,7 @@ export class MatchService {
       })
       this.sendView(room, p, [])
     }
+    this.armTurnTimer(room)   // 开局：红方回合计时
     return roomId
   }
 
@@ -222,7 +234,10 @@ export class MatchService {
       youAre: player.side,
       opponentName: foe.name,
     })
+    // 断线期间回合计时暂停：恢复计时并向双方补发视角（刷新倒计时截止）
+    this.armTurnTimer(room)
     this.sendView(room, player, [])
+    this.sendView(room, foe, [])
     this.push(foe.socket, 'opponent:reconnected', {})
     return true
   }
@@ -247,9 +262,11 @@ export class MatchService {
       this.broadcast(room, events)
       if (room.state.result) {
         this.endMatch(room, room.state.result.winner, room.state.result.reason)
+      } else {
+        this.armTurnTimer(room)   // 换边：对手回合计时
       }
     } catch {
-      this.sendView(room, player, [])   // 非法落子：回推纠偏
+      this.sendView(room, player, [])   // 非法落子：回推纠偏（同一回合，计时继续）
     }
   }
 
@@ -274,6 +291,8 @@ export class MatchService {
       this.broadcast(room, events)
       if (room.state.result) {
         this.endMatch(room, room.state.result.winner, room.state.result.reason)
+      } else {
+        this.armTurnTimer(room)   // 换边：对手回合计时
       }
     } catch {
       this.sendView(room, player, [])   // 非法跳过（已终局等）：回推纠偏
@@ -321,8 +340,9 @@ export class MatchService {
       return
     }
 
-    // 宽限期：不立即判负，等待重连
+    // 宽限期：不立即判负，等待重连；回合计时暂停（避免断线方被自动跳过、对局空转）
     quitter.socket = null
+    this.clearTurnTimer(room)
     const stayer = room.players.find(p => p.side !== quitter.side)!
     this.logger.warn(`match ${room.matchId}: ${quitter.name} disconnected (grace ${RECONNECT_GRACE_MS}ms)`)
     this.push(stayer.socket, 'opponent:disconnected', { graceMs: RECONNECT_GRACE_MS })
@@ -342,6 +362,7 @@ export class MatchService {
       clearTimeout(room.forfeitTimer)
       room.forfeitTimer = null
     }
+    this.clearTurnTimer(room)
     room.state.phase = 'FINISHED'
     room.state.result = { winner, reason: reason as MatchResult['reason'] }
 
@@ -412,8 +433,61 @@ export class MatchService {
     return room.players.find(p => p.socket === socket)
   }
 
+  // ---------- 回合计时 ----------
+
+  /** 武装回合计时：清旧定时器，对当前行动方重新计 15s；终局/非行动阶段不计时 */
+  private armTurnTimer(room: GameRoom): void {
+    this.clearTurnTimer(room)
+    if (room.state.result || room.state.phase !== 'TURN_ACTION') return
+    room.turnDeadline = Date.now() + TURN_TIMEOUT_MS
+    room.turnTimer = setTimeout(() => {
+      room.turnTimer = null
+      this.timeoutSkip(room)
+    }, TURN_TIMEOUT_MS)
+  }
+
+  private clearTurnTimer(room: GameRoom): void {
+    if (room.turnTimer) {
+      clearTimeout(room.turnTimer)
+      room.turnTimer = null
+    }
+    room.turnDeadline = null
+  }
+
+  /**
+   * 回合超时结算：视为当前行动方跳过（与 applySkip 同语义，事件标注 timeout）。
+   * 待胜期守方超时 = 放弃阻断判负；双方连续超时 → both_skip 平局（防双挂机死局）。
+   */
+  private timeoutSkip(room: GameRoom): void {
+    if (room.state.result || room.state.phase !== 'TURN_ACTION') return
+    if (!this.rooms.has(room.matchId)) return   // 房间已销毁
+    const side = room.state.turnSide
+    this.logger.log(`match ${room.matchId}: ${side} turn timeout, auto-skip`)
+    try {
+      const events = skip(room.state, side)
+      if (events[0]?.type === 'skipped') events[0] = { ...events[0], timeout: true }
+      this.record(room, side, 'skip', { timeout: true })
+      for (const e of events) {
+        if (e.type === 'dealt') {
+          this.record(room, e.side, 'deal', { count: e.pieces.length })
+        }
+      }
+      this.broadcast(room, events)
+      // skip() 会原地修改 state（可能产生终局），显式重读绕过入口卫兵的类型收窄
+      const result = room.state.result as MatchResult | null
+      if (result) {
+        this.endMatch(room, result.winner, result.reason)
+      } else {
+        this.armTurnTimer(room)
+      }
+    } catch {
+      // 状态异常（非行动阶段等）：不再重试
+    }
+  }
+
   private disposeRoom(room: GameRoom): void {
     if (room.forfeitTimer) clearTimeout(room.forfeitTimer)
+    this.clearTurnTimer(room)
     for (const p of room.players) {
       if (p.socket) this.socketRoom.delete(p.socket as WebSocket)
       this.playerRoom.delete(p.playerId)
@@ -454,6 +528,7 @@ export class MatchService {
         deck: hidden(s.deck.length),
       },
       events: this.sanitizeEvents(events, 'spectator'),
+      turnDeadline: s.result || s.phase !== 'TURN_ACTION' ? null : room.turnDeadline,
     }
     for (const spec of room.spectators) this.push(spec.socket, 'game:state', view)
   }
@@ -476,6 +551,7 @@ export class MatchService {
         deck: hidden(s.deck.length),
       },
       events: this.sanitizeEvents(events, player.side),
+      turnDeadline: s.result || s.phase !== 'TURN_ACTION' ? null : room.turnDeadline,
     }
     this.push(player.socket, 'game:state', view)
   }

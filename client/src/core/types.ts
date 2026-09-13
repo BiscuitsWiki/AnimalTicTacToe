@@ -91,8 +91,8 @@ export type PlaceEvent =
    * 双方首个行动回合发起始 3 张，之后每回合抽 1 张；牌堆为空时不产生该事件。
    */
   | { type: 'dealt'; side: Side; pieces: Piece[] }
-  /** side 跳过本回合（不落子，正常换边抽牌）；待胜期守方跳过 = 未阻断 */
-  | { type: 'skipped'; side: Side }
+  /** side 跳过本回合（不落子，正常换边抽牌）；待胜期守方跳过 = 未阻断。timeout: 回合超时自动跳过 */
+  | { type: 'skipped'; side: Side; timeout?: boolean }
 
 /** 规则错误码 */
 export type RuleErrorCode =
