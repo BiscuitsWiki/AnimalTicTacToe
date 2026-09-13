@@ -12,6 +12,8 @@ export interface ApiPiece {
   id: string
   name: string
   element: string
+  /** 副属性（可选） */
+  element2?: string | null
   imageUrl: string
 }
 

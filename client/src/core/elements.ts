@@ -1,66 +1,111 @@
 /**
- * 宝可梦式 18 属性体系。
- * 属性名与克制关系参照宝可梦（玩法层面不受版权保护），我方棋子形象全部自创。
+ * 洛克王国 18 属性体系。
+ * 属性名与克制关系参照《洛克王国：世界》18 派系（玩法规则不受版权保护），棋子形象与命名全部自创。
+ * 倍率体系：克制 = 2x；抵抗 = 0.5x（A 克 B 时，B 攻击 A 被减半抵抗）；
+ * 互克对（龙/龙、幽/幽、光↔幽、冰↔地、恶↔萌）双向均按 2x（克制优先于抵抗）；其余 1x。
+ * 棋子支持双属性（主 + 可选副）：进攻方从双属性中择优，防守方双属性连乘（见 captureMultiplier）。
  */
 
 export type Element =
-  | 'fire' | 'water' | 'grass' | 'electric' | 'ice' | 'fighting' | 'poison' | 'ground'
-  | 'flying' | 'psychic' | 'bug' | 'rock' | 'ghost' | 'dragon' | 'dark' | 'steel'
-  | 'fairy' | 'normal'
+  | 'fire' | 'water' | 'grass' | 'electric' | 'ice' | 'poison' | 'bug' | 'dragon'
+  | 'dark' | 'ghost' | 'normal' | 'martial' | 'earth' | 'wing' | 'illusion' | 'light'
+  | 'machine' | 'cute'
 
 export const ELEMENTS: Element[] = [
-  'fire', 'water', 'grass', 'electric', 'ice', 'fighting', 'poison', 'ground',
-  'flying', 'psychic', 'bug', 'rock', 'ghost', 'dragon', 'dark', 'steel',
-  'fairy', 'normal',
+  'fire', 'water', 'grass', 'electric', 'ice', 'poison', 'bug', 'dragon',
+  'dark', 'ghost', 'normal', 'martial', 'earth', 'wing', 'illusion', 'light',
+  'machine', 'cute',
 ]
 
 /** 中文属性名（UI 展示用） */
 export const ELEMENT_NAMES_ZH: Record<Element, string> = {
-  fire: '火', water: '水', grass: '草', electric: '电', ice: '冰', fighting: '格斗',
-  poison: '毒', ground: '地面', flying: '飞行', psychic: '超能', bug: '虫', rock: '岩石',
-  ghost: '幽灵', dragon: '龙', dark: '恶', steel: '钢', fairy: '妖精', normal: '一般',
+  fire: '火', water: '水', grass: '草', electric: '电', ice: '冰', poison: '毒',
+  bug: '虫', dragon: '龙', dark: '恶', ghost: '幽', normal: '普通', martial: '武',
+  earth: '地', wing: '翼', illusion: '幻', light: '光', machine: '机械', cute: '萌',
 }
 
 /** 属性主题色（UI 展示用） */
 export const ELEMENT_COLORS: Record<Element, string> = {
   fire: '#f0803c', water: '#4f90e0', grass: '#5cb85c', electric: '#e8c531', ice: '#6fc7d4',
-  fighting: '#d05048', poison: '#a050a8', ground: '#cfa452', flying: '#8f92e0',
-  psychic: '#f06a92', bug: '#9ab028', rock: '#b0a048', ghost: '#7060a0', dragon: '#6858d8',
-  dark: '#6f5a48', steel: '#8a97ad', fairy: '#ee9ab4', normal: '#a0a090',
+  poison: '#a050a8', bug: '#9ab028', dragon: '#6858d8', dark: '#6f5a48', ghost: '#7060a0',
+  normal: '#a0a090', martial: '#d05048', earth: '#cfa452', wing: '#8f92e0', illusion: '#a86ad8',
+  light: '#e8c94f', machine: '#8a97ad', cute: '#ee9ab4',
 }
 
 /**
- * 克制倍率表：CHART[攻击方][防守方] -> 倍率（仅列出非 1x 关系，未列出 = 1x）。
- * 完整对照宝可梦第六世代起的 18 属性克制表。
- * 本游戏的占领判定只看倍率是否 > 1（canCapture），与具体数值无关。
+ * 克制表：CHART[攻击方][防守方] -> 2（克制），未列出 = 无克制关系。
+ * 对照《洛克王国：世界》18 派系克制关系：
+ * 火克草/冰/虫/机械；水克火/地/机械；草克水/光/地；电克水/翼；冰克草/地/龙/翼；
+ * 毒克草/萌；虫克草/恶/幻；龙克龙；恶克毒/萌/幽；幽克光/幽/幻；普通不克制任何属性；
+ * 武克普通/地/冰/恶/机械；地克火/冰/电/毒；翼克草/虫/武；幻克毒/武；光克幽/恶；
+ * 机械克地/冰/萌；萌克龙/武/恶。
+ * 抵抗关系由克制表镜像推导：A 克 B ⟹ B 攻击 A 为 0.5x（见 effectiveness）。
  */
 const CHART: Record<Element, Partial<Record<Element, number>>> = {
-  normal:   { rock: 0.5, steel: 0.5, ghost: 0 },
-  fire:     { grass: 2, ice: 2, bug: 2, steel: 2, fire: 0.5, water: 0.5, rock: 0.5, dragon: 0.5 },
-  water:    { fire: 2, ground: 2, rock: 2, water: 0.5, grass: 0.5, dragon: 0.5 },
-  electric: { water: 2, flying: 2, grass: 0.5, electric: 0.5, dragon: 0.5, ground: 0 },
-  grass:    { water: 2, ground: 2, rock: 2, fire: 0.5, grass: 0.5, poison: 0.5, flying: 0.5, bug: 0.5, dragon: 0.5, steel: 0.5 },
-  ice:      { grass: 2, ground: 2, flying: 2, dragon: 2, fire: 0.5, water: 0.5, ice: 0.5, steel: 0.5 },
-  fighting: { normal: 2, ice: 2, rock: 2, dark: 2, steel: 2, poison: 0.5, flying: 0.5, psychic: 0.5, bug: 0.5, fairy: 0.5, ghost: 0 },
-  poison:   { grass: 2, fairy: 2, poison: 0.5, ground: 0.5, rock: 0.5, ghost: 0.5, steel: 0 },
-  ground:   { fire: 2, electric: 2, poison: 2, rock: 2, steel: 2, grass: 0.5, bug: 0.5, flying: 0 },
-  flying:   { grass: 2, fighting: 2, bug: 2, electric: 0.5, rock: 0.5, steel: 0.5 },
-  psychic:  { fighting: 2, poison: 2, psychic: 0.5, steel: 0.5, dark: 0 },
-  bug:      { grass: 2, psychic: 2, dark: 2, fire: 0.5, fighting: 0.5, poison: 0.5, flying: 0.5, ghost: 0.5, steel: 0.5, fairy: 0.5 },
-  rock:     { fire: 2, ice: 2, flying: 2, bug: 2, fighting: 0.5, ground: 0.5, steel: 0.5 },
-  ghost:    { psychic: 2, ghost: 2, dark: 0.5, normal: 0 },
-  dragon:   { dragon: 2, steel: 0.5, fairy: 0 },
-  dark:     { psychic: 2, ghost: 2, fighting: 0.5, dark: 0.5, fairy: 0.5 },
-  steel:    { ice: 2, rock: 2, fairy: 2, fire: 0.5, water: 0.5, electric: 0.5, steel: 0.5 },
-  fairy:    { fighting: 2, dragon: 2, dark: 2, fire: 0.5, poison: 0.5, steel: 0.5 },
+  fire:     { grass: 2, ice: 2, bug: 2, machine: 2 },
+  water:    { fire: 2, earth: 2, machine: 2 },
+  grass:    { water: 2, light: 2, earth: 2 },
+  electric: { water: 2, wing: 2 },
+  ice:      { grass: 2, earth: 2, dragon: 2, wing: 2 },
+  poison:   { grass: 2, cute: 2 },
+  bug:      { grass: 2, dark: 2, illusion: 2 },
+  dragon:   { dragon: 2 },
+  dark:     { poison: 2, cute: 2, ghost: 2 },
+  ghost:    { light: 2, ghost: 2, illusion: 2 },
+  normal:   {},
+  martial:  { normal: 2, earth: 2, ice: 2, dark: 2, machine: 2 },
+  earth:    { fire: 2, ice: 2, electric: 2, poison: 2 },
+  wing:     { grass: 2, bug: 2, martial: 2 },
+  illusion: { poison: 2, martial: 2 },
+  light:    { ghost: 2, dark: 2 },
+  machine:  { earth: 2, ice: 2, cute: 2 },
+  cute:     { dragon: 2, martial: 2, dark: 2 },
 }
 
-/** 攻击属性对防守属性的克制倍率，未声明的关系为 1x */
+/**
+ * 单属性对单属性的进攻倍率：
+ * - 攻击方克防守方 → 2（互克对双向均为 2，克制优先于抵抗）
+ * - 防守方克攻击方 → 0.5（进攻被抵抗，受击减半）
+ * - 其余 → 1
+ */
 export function effectiveness(atk: Element, def: Element): number {
-  return CHART[atk][def] ?? 1
+  if (CHART[atk][def] === 2) return 2
+  if (CHART[def][atk] === 2) return 0.5
+  return 1
 }
 
-/** 叠放占领判定：只有倍率 > 1（克制）才可以叠放占领对方格子 */
-export function canCapture(atk: Element, def: Element): boolean {
-  return effectiveness(atk, def) > 1
+/** 双属性载体（判定所需最小结构；Piece 结构性兼容，避免与 types.ts 循环依赖） */
+export interface ElementProfile {
+  element: Element
+  /** 副属性（可选）：进攻择优、防守连乘；与主属性相同时按单属性处理 */
+  element2?: Element
+}
+
+/** 棋子的有效属性列表（去重，恒至少 1 项） */
+function elementsOf(p: ElementProfile): Element[] {
+  return p.element2 && p.element2 !== p.element
+    ? [p.element, p.element2]
+    : [p.element]
+}
+
+/**
+ * 双属性进攻倍率（叠放占领判定基础）：
+ * 进攻方从主/副属性中选择进攻优势更大的一者，对防守方两个属性分别计算倍率后连乘。
+ * 例：翼+水 攻 火+草 → 翼 1×2=2，水 2×0.5=1 → 取 2（翼更优）。
+ * 倍率 > 1 即克制，≤ 1（含抵抗抵消、双向抵抗）不属于克制。
+ */
+export function captureMultiplier(atk: ElementProfile, def: ElementProfile): number {
+  const defEls = elementsOf(def)
+  let best = 0
+  for (const a of elementsOf(atk)) {
+    let m = 1
+    for (const d of defEls) m *= effectiveness(a, d)
+    if (m > best) best = m
+  }
+  return best
+}
+
+/** 叠放占领判定：进攻方（双属性择优）对防守方（双属性连乘）倍率 > 1 才可叠放占领 */
+export function canCapture(atk: ElementProfile, def: ElementProfile): boolean {
+  return captureMultiplier(atk, def) > 1
 }

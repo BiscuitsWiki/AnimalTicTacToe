@@ -11,6 +11,8 @@ interface MyPiece {
   id: string
   name: string
   element: string
+  /** 副属性（可选） */
+  element2?: string | null
   imageUrl: string
   status: 'pending' | 'approved' | 'rejected'
   rejectReason?: string | null
@@ -25,6 +27,7 @@ const STATUS_TEXT: Record<MyPiece['status'], string> = {
 export default function Workshop () {
   const [name, setName] = useState('')
   const [element, setElement] = useState<Element>('fire')
+  const [element2, setElement2] = useState<Element | null>(null)   // 副属性（可选）
   const [imagePath, setImagePath] = useState('')      // 本地临时路径（预览用）
   const [imageUrl, setImageUrl] = useState('')        // 服务端 URL（提交用）
   const [uploading, setUploading] = useState(false)
@@ -73,7 +76,7 @@ export default function Workshop () {
     if (!imageUrl) return Taro.showToast({ title: '请先上传棋子图片', icon: 'none' })
     setSubmitting(true)
     try {
-      await postJSON('/pieces', { name: trimmed, element, imageUrl })
+      await postJSON('/pieces', { name: trimmed, element, element2: element2 ?? undefined, imageUrl })
       Taro.showToast({ title: '已提交待审核', icon: 'success' })
       setName('')
       setImagePath('')
@@ -128,7 +131,10 @@ export default function Workshop () {
                 key={el}
                 className={`el-chip ${element === el ? 'el-chip--on' : ''}`}
                 style={`border-color: ${ELEMENT_COLORS[el]}; ${element === el ? `background:${ELEMENT_COLORS[el]}` : ''}`}
-                onClick={() => setElement(el)}
+                onClick={() => {
+                  setElement(el)
+                  if (element2 === el) setElement2(null)   // 主属性改选时清掉相同副属性
+                }}
               >
                 <Text style={element === el ? 'color:#fff' : `color:${ELEMENT_COLORS[el]}`}>
                   {ELEMENT_NAMES_ZH[el]}
@@ -136,6 +142,31 @@ export default function Workshop () {
               </View>
             ))}
           </View>
+        </View>
+
+        <View className='form-row'>
+          <Text className='form-row__label'>副属性（可选）</Text>
+          <View className='form-row__elements'>
+            <View
+              className={`el-chip el-chip--none ${element2 === null ? 'el-chip--on' : ''}`}
+              onClick={() => setElement2(null)}
+            >
+              <Text>无</Text>
+            </View>
+            {ELEMENTS.filter(el => el !== element).map(el => (
+              <View
+                key={el}
+                className={`el-chip ${element2 === el ? 'el-chip--on' : ''}`}
+                style={`border-color: ${ELEMENT_COLORS[el]}; ${element2 === el ? `background:${ELEMENT_COLORS[el]}` : ''}`}
+                onClick={() => setElement2(element2 === el ? null : el)}
+              >
+                <Text style={element2 === el ? 'color:#fff' : `color:${ELEMENT_COLORS[el]}`}>
+                  {ELEMENT_NAMES_ZH[el]}
+                </Text>
+              </View>
+            ))}
+          </View>
+          <Text className='form-row__tip'>双属性判定：进攻择优、防守连乘（克制 2x / 抵抗 0.5x）</Text>
         </View>
 
         <View className='form-row'>
@@ -172,12 +203,22 @@ export default function Workshop () {
               />
               <View className='mine-item__info'>
                 <Text className='mine-item__name'>{p.name}</Text>
-                <Text
-                  className='mine-item__element'
-                  style={`background: ${ELEMENT_COLORS[p.element as Element] ?? '#999'}`}
-                >
-                  {(ELEMENT_NAMES_ZH as Record<string, string>)[p.element] ?? p.element}
-                </Text>
+                <View className='mine-item__elements'>
+                  <Text
+                    className='mine-item__element'
+                    style={`background: ${ELEMENT_COLORS[p.element as Element] ?? '#999'}`}
+                  >
+                    {(ELEMENT_NAMES_ZH as Record<string, string>)[p.element] ?? p.element}
+                  </Text>
+                  {p.element2 && (
+                    <Text
+                      className='mine-item__element'
+                      style={`background: ${ELEMENT_COLORS[p.element2 as Element] ?? '#999'}`}
+                    >
+                      {(ELEMENT_NAMES_ZH as Record<string, string>)[p.element2] ?? p.element2}
+                    </Text>
+                  )}
+                </View>
                 <Text className={`mine-item__status mine-item__status--${p.status}`}>
                   {STATUS_TEXT[p.status]}
                 </Text>

@@ -18,11 +18,13 @@ export const BOARD_SIZE = 9
 /** 共用牌堆张数（18 属性 × 2 张预设卡） */
 export const DECK_SIZE = 36
 
-/** 一张棋子卡 */
+/** 一张棋子卡（主属性必选，副属性可选：进攻择优、防守连乘，见 core/elements captureMultiplier） */
 export interface Piece {
   id: string
   name: string
   element: Element
+  /** 副属性（可选）；与主属性相同时按单属性处理 */
+  element2?: Element
 }
 
 /** 格子上的叠放层（自底向上，最后一项为最上层） */

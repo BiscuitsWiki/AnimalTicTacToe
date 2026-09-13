@@ -122,6 +122,11 @@
   &--on {
     border-width: 2px;
   }
+
+  &--none {
+    border-color: #c9bfae;
+    color: #b0a89a;
+  }
 }
 
 .upload {
@@ -199,8 +204,12 @@
     color: #3a3a3a;
   }
 
+  &__elements {
+    display: flex;
+    gap: 8px;
+  }
+
   &__element {
-    align-self: flex-start;
     font-size: 20px;
     color: #fff;
     padding: 2px 12px;

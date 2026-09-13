@@ -480,11 +480,14 @@ export class MatchService {
     this.push(player.socket, 'game:state', view)
   }
 
-  /** 组牌：与客户端 deckSource 语义一致——工坊审核池 ≥36 张时随机取 36 张；不足时整副回退预设牌（36 张属性齐全），绝不出现占位卡 */
+  /** 组牌：与客户端 deckSource 语义一致——工坊审核池 ≥36 张时随机取 36 张；不足时整副回退预设牌（51 张 = 36 单属性 + 15 双属性，属性齐全），绝不出现占位卡 */
   private async buildDeck() {
     const approved = await this.pieceService.listApproved(500)
     const pieces = approved.map(p => ({
-      id: p.id, name: p.name, element: p.element as Element,
+      id: p.id,
+      name: p.name,
+      element: p.element as Element,
+      ...(p.element2 ? { element2: p.element2 as Element } : {}),
     }))
     if (pieces.length >= DECK_SIZE) {
       return shuffle(pieces).slice(0, DECK_SIZE) as Piece[]

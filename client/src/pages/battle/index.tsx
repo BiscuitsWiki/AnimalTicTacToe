@@ -943,12 +943,22 @@ export default function Battle () {
               )}
               {top && (
                 <View className='piece' style={`border-color: ${ELEMENT_COLORS[top.piece.element]}`}>
-                  <Text
-                    className='piece__element'
-                    style={`background: ${ELEMENT_COLORS[top.piece.element]}`}
-                  >
-                    {ELEMENT_NAMES_ZH[top.piece.element]}
-                  </Text>
+                  <View className='piece__elements'>
+                    <Text
+                      className='piece__element'
+                      style={`background: ${ELEMENT_COLORS[top.piece.element]}`}
+                    >
+                      {ELEMENT_NAMES_ZH[top.piece.element]}
+                    </Text>
+                    {top.piece.element2 && (
+                      <Text
+                        className='piece__element'
+                        style={`background: ${ELEMENT_COLORS[top.piece.element2]}`}
+                      >
+                        {ELEMENT_NAMES_ZH[top.piece.element2]}
+                      </Text>
+                    )}
+                  </View>
                   <Text className='piece__name'>{top.piece.name}</Text>
                 </View>
               )}
@@ -1004,12 +1014,22 @@ export default function Battle () {
                 style={`border-color: ${ELEMENT_COLORS[piece.element]}`}
                 onClick={() => onSelectCard(idx)}
               >
-                <Text
-                  className='card__element'
-                  style={`background: ${ELEMENT_COLORS[piece.element]}`}
-                >
-                  {ELEMENT_NAMES_ZH[piece.element]}
-                </Text>
+                <View className='card__elements'>
+                  <Text
+                    className='card__element'
+                    style={`background: ${ELEMENT_COLORS[piece.element]}`}
+                  >
+                    {ELEMENT_NAMES_ZH[piece.element]}
+                  </Text>
+                  {piece.element2 && (
+                    <Text
+                      className='card__element'
+                      style={`background: ${ELEMENT_COLORS[piece.element2]}`}
+                    >
+                      {ELEMENT_NAMES_ZH[piece.element2]}
+                    </Text>
+                  )}
+                </View>
                 <Text className='card__name'>{piece.name}</Text>
               </View>
             ))}

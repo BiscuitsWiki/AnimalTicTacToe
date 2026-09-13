@@ -13,7 +13,10 @@ function toPiece(p: ApiPiece): Piece {
   const element = (ELEMENTS as string[]).includes(p.element)
     ? (p.element as Piece['element'])
     : 'normal'
-  return { id: p.id, name: p.name, element }
+  const element2 = p.element2 && (ELEMENTS as string[]).includes(p.element2)
+    ? (p.element2 as Piece['element'])
+    : undefined
+  return { id: p.id, name: p.name, element, element2 }
 }
 
 export interface DeckSource {

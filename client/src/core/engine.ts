@@ -113,7 +113,7 @@ function isLegalTarget(board: Cell[], side: Side, piece: Piece, cellIdx: number)
   return (
     top.side !== side &&                                         // ① 对方格
     cell.stack.length < STACK_LIMIT &&                           // ② 未满 8 层
-    canCapture(piece.element, top.piece.element)                 // ③ 克制最上层
+    canCapture(piece, top.piece)                                 // ③ 克制最上层（双属性择优）
   )
 }
 
@@ -167,7 +167,7 @@ export function place(
     const top = cell.stack[cell.stack.length - 1]
     if (top.side === side) throw new RuleError('CELL_OWNED')
     if (cell.stack.length >= STACK_LIMIT) throw new RuleError('STACK_FULL')
-    if (!canCapture(piece.element, top.piece.element)) throw new RuleError('NOT_EFFECTIVE')
+    if (!canCapture(piece, top.piece)) throw new RuleError('NOT_EFFECTIVE')
     cell.stack.push({ side, piece })                           // b. 克制叠放占领
   }
   hand.splice(handIdx, 1)

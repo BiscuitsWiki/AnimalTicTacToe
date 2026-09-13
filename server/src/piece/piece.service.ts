@@ -1,13 +1,16 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma.service.js'
 import { ContentSecurityService } from './content-security.service.js'
+import { ELEMENTS } from '../game/core/elements.js'
 
-/** 18 属性白名单（与前端 core/elements.ts 保持一致） */
-const ELEMENTS = new Set([
-  'fire', 'water', 'grass', 'electric', 'ice', 'fighting', 'poison', 'ground',
-  'flying', 'psychic', 'bug', 'rock', 'ghost', 'dragon', 'dark', 'steel',
-  'fairy', 'normal',
-])
+/** 18 属性白名单（单一来源：core/elements.ts，与客户端保持一致） */
+const ELEMENT_SET = new Set<string>(ELEMENTS)
+
+/** 旧宝可梦属性 ID → 洛克王国属性（历史棋子数据迁移，启动时执行、幂等） */
+const ELEMENT_ALIASES: Record<string, string> = {
+  fighting: 'martial', ground: 'earth', flying: 'wing', psychic: 'illusion',
+  steel: 'machine', fairy: 'cute', rock: 'earth',
+}
 
 const NAME_MAX_LEN = 12
 
@@ -26,14 +29,29 @@ export class PieceService {
     private readonly sec: ContentSecurityService,
   ) {}
 
+  /** 启动迁移：把宝可梦时代的旧属性 ID 洗成洛克王国属性（无匹配行时为空操作） */
+  async onModuleInit() {
+    for (const [from, to] of Object.entries(ELEMENT_ALIASES)) {
+      await this.prisma.piece.updateMany({ where: { element: from }, data: { element: to } })
+    }
+  }
+
   /** 提交创作棋子（进入待审核；配置腾讯云密钥时先机器送检，Block 直接拒绝） */
-  async submit(dto: { name: string; element: string; imageUrl: string; authorId?: string }) {
+  async submit(dto: { name: string; element: string; element2?: string | null; imageUrl: string; authorId?: string }) {
     const name = dto.name?.trim() ?? ''
     if (name.length === 0 || name.length > NAME_MAX_LEN) {
       throw new BadRequestException(`棋子名需为 1~${NAME_MAX_LEN} 个字符`)
     }
-    if (!ELEMENTS.has(dto.element)) {
+    if (!ELEMENT_SET.has(dto.element)) {
       throw new BadRequestException('非法属性')
+    }
+    if (dto.element2 != null && dto.element2 !== '') {
+      if (!ELEMENT_SET.has(dto.element2)) {
+        throw new BadRequestException('非法副属性')
+      }
+      if (dto.element2 === dto.element) {
+        throw new BadRequestException('副属性需与主属性不同')
+      }
     }
     if (!dto.imageUrl) {
       throw new BadRequestException('缺少棋子图片')
@@ -52,6 +70,7 @@ export class PieceService {
       data: {
         name,
         element: dto.element,
+        element2: dto.element2 || null,
         imageUrl: dto.imageUrl,
         authorId: dto.authorId ?? 'guest',
         status: 'pending',
@@ -65,7 +84,7 @@ export class PieceService {
       where: { status: 'approved' },
       orderBy: { createdAt: 'desc' },
       take: limit,
-      select: { id: true, name: true, element: true, imageUrl: true },
+      select: { id: true, name: true, element: true, element2: true, imageUrl: true },
     })
   }
 

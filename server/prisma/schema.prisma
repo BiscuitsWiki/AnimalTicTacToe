@@ -29,6 +29,7 @@ model Piece {
   id          String   @id @default(cuid())
   name        String                     // 棋子名（1~12 字）
   element     String                     // 18 属性之一（服务端校验白名单）
+  element2    String?                    // 副属性（可选，白名单校验且不得与主属性相同；进攻择优/防守连乘）
   imageUrl    String                     // 图片 URL（开发期: /uploads/xxx.png）
   status      String   @default("pending") // pending | approved | rejected | reported
   rejectReason String?                 // 驳回原因（rejected 时展示给创作者）

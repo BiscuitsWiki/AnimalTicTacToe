@@ -92,7 +92,7 @@ export class PieceController {
 
   /** 提交创作棋子（登录态下作者归属当前用户） */
   @Post()
-  submit(@Ip() ip: string, @Headers() headers: Record<string, string>, @Body() body: { name: string; element: string; imageUrl: string; authorId?: string }) {
+  submit(@Ip() ip: string, @Headers() headers: Record<string, string>, @Body() body: { name: string; element: string; element2?: string | null; imageUrl: string; authorId?: string }) {
     throttle(`pieces:submit:${ip}`, 5)
     // 兼容未登录调用（登录前旧行为），登录后以 token 归属为准
     return this.auth.verifyTokenOrNull(this.bearer(headers)).then(user => {
