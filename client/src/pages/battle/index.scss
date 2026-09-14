@@ -401,8 +401,8 @@
 .board {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
-  padding: 16px;
+  gap: 22px;
+  padding: 22px;
   background: #fffdf9;
   border-radius: 24px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
@@ -418,7 +418,7 @@
     background: #f4f0e8;
     border: 3px solid #e5dfd3;
     box-sizing: border-box;
-    transition: border-color 0.2s, background 0.2s;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s, opacity 0.2s;
 
     &--red {
       background: #f9dcd7;
@@ -447,17 +447,20 @@
       box-shadow: 0 0 0 4px rgba(224, 101, 74, 0.3), 0 0 0 9px rgba(79, 123, 217, 0.26);
     }
 
-    /* 已选棋子的可落格：绿虚线边框 + 内侧绿光晕（不覆盖底色，保留红/蓝阵营色；
+    /* 已选棋子的可落格：绿色边缘光晕（外发光 + 细绿描边，不覆盖底色，保留红/蓝阵营色；
        置于 last-* 之后，选中态优先） */
     &--ok {
       border-color: #2e9e44;
-      border-style: dashed;
-      border-width: 6px;
-      box-shadow: inset 0 0 16px rgba(46, 158, 68, 0.28);
+      box-shadow: 0 0 12px 4px rgba(46, 158, 68, 0.55);
 
       &:active {
-        box-shadow: inset 0 0 16px rgba(46, 158, 68, 0.42);
+        box-shadow: 0 0 16px 6px rgba(46, 158, 68, 0.7);
       }
+    }
+
+    /* 已选棋子时的不可落格：淡化蒙层（与对方回合己方手牌 card--disabled 一致） */
+    &--dim {
+      opacity: 0.55;
     }
 
   }

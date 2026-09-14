@@ -591,6 +591,9 @@ export default function Battle () {
     return legalCells(match, mySide, piece)
   }, [match, selected, myTurn, mySide])
 
+  /** 选牌提示态：己方行动回合已选牌 → 可落格绿光晕、其余格淡化（无合法落点时全盘淡化） */
+  const picking = !!match && myTurn && match.phase === 'TURN_ACTION' && selected !== null
+
   /** AI 回合（仅 ai 模式）：回合发牌制下直接行动；无合法落子时自动跳过 */
   useEffect(() => {
     if (mode !== 'ai' || !match || match.phase === 'FINISHED' || match.turnSide !== 'blue') return
@@ -1085,7 +1088,7 @@ export default function Battle () {
                 'board__cell',
                 side === 'red' ? 'board__cell--red' : '',
                 side === 'blue' ? 'board__cell--blue' : '',
-                canDrop ? 'board__cell--ok' : '',
+                canDrop ? 'board__cell--ok' : picking ? 'board__cell--dim' : '',
                 isLastRed ? 'board__cell--last-red' : '',
                 isLastBlue ? 'board__cell--last-blue' : '',
                 lastBoth ? 'board__cell--last-both' : '',
