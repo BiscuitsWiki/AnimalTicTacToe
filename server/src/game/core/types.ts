@@ -1,7 +1,7 @@
 /**
  * 领域类型定义。
  * 注意：本文件与 engine/ai/pieces 均为纯 TS 规则引擎，不依赖 React/Taro，
- * 从 client/src/core 同步拷贝（服务端权威裁决）。
+ * 从 client/src/core 同步拷贝（服务端权威裁决，仅 import 需带 .js 扩展名）。
  */
 import type { Element } from './elements.js'
 
@@ -11,6 +11,8 @@ export type Side = 'red' | 'blue'
 export const TURN_DEAL_BASE = 3
 /** 非首个行动回合的抽牌张数 */
 export const TURN_DRAW_COUNT = 1
+/** 手牌上限：回合抽牌后超出即撕毁最新抽到的牌（防跳过/拖时间囤牌） */
+export const HAND_LIMIT = 3
 /** 单格叠放上限 */
 export const STACK_LIMIT = 8
 /** 棋盘格子数（3×3） */
@@ -88,9 +90,16 @@ export type PlaceEvent =
   | { type: 'resigned'; side: Side }
   /**
    * 回合开始自动抽牌：发给 side 的牌（对方/观战视角须脱敏为占位）。
-   * 双方首个行动回合发起始 3 张，之后每回合抽 1 张；牌堆为空时不产生该事件。
+   * 起始手牌 3 张在开局即发（不产生本事件），双方各自首个行动回合不补牌，之后每回合抽 1 张；
+   * 牌堆为空时不产生该事件。
+   * 手牌已满（HAND_LIMIT）时抽到的牌不进入手牌，改随 shredded 事件撕毁。
    */
   | { type: 'dealt'; side: Side; pieces: Piece[] }
+  /**
+   * 手牌上限撕牌：side 手牌已满时最新抽到的牌直接撕毁（不进手牌、不回牌堆）。
+   * pieces 为被撕的牌（对方/观战视角脱敏为占位）；客户端据此播放撕毁动效（动效期间不可点击）。
+   */
+  | { type: 'shredded'; side: Side; pieces: Piece[] }
   /** side 跳过本回合（不落子，正常换边抽牌）；待胜期守方跳过 = 未阻断。timeout: 回合超时自动跳过 */
   | { type: 'skipped'; side: Side; timeout?: boolean }
 

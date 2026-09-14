@@ -446,6 +446,193 @@ describe('RoomService（坐席制）', () => {
     expect(state.hostName).toBe('客人')
   })
 
+  // ---------- 断线暂离（左滑/关闭页面 ≠ 主动退出） ----------
+
+  it('房主断线（无坐席）：暂离保留房间 3 分钟，到期销毁 host_away_expired', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    // 先入座再观战，然后坐席玩家退出 → 房间只剩房主+观战者（无坐席）
+    const { sock: guestSock } = await seatGuest(roomId)
+    const { sock: specSock } = await seatGuest(roomId, 'p3', '路人')
+    service.leaveRoom(guestSock as never)
+
+    service.handleDisconnect(hostSock as never)
+    expect(service.roomCount).toBe(1)   // 暂离保留，不立即销毁
+    expect(service.isPlayerInRoom('p1')).toBe(true)   // 房主映射保留
+    // 观战者视角：红方坐席灰显暂离
+    const state = specSock.last('room:state') as { redAway: boolean; blueAway: boolean }
+    expect(state.redAway).toBe(true)
+    expect(state.blueAway).toBe(false)
+
+    vi.advanceTimersByTime(3 * 60 * 1000 - 1000)   // 未到期
+    expect(service.roomCount).toBe(1)
+
+    vi.advanceTimersByTime(1000)
+    expect(service.roomCount).toBe(0)
+    const closed = specSock.last('room:closed') as { reason: string }
+    expect(closed.reason).toBe('host_away_expired')
+  })
+
+  it('房主暂离 3 分钟内重进：恢复房主身份，暂离计时取消', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+
+    service.handleDisconnect(hostSock as never)
+    const re = await service.joinRoom(roomId, 'p1', '小明', new FakeSocket() as never)
+    expect(re.ok).toBe(true)
+    if (!re.ok) return
+    expect(re.data.role).toBe('host')
+    expect(re.data.room.redAway).toBe(false)
+
+    vi.advanceTimersByTime(3 * 60 * 1000 + 1000)   // 超过暂离期：计时已取消
+    expect(service.roomCount).toBe(1)
+    expect(service.isPlayerInRoom('p1')).toBe(true)
+  })
+
+  it('房主暂离期间房客入座：到期房主未归，所有权转让给房客', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+
+    service.handleDisconnect(hostSock as never)
+    const g = await seatGuest(roomId)
+    expect(g.res.ok).toBe(true)
+    if (!g.res.ok) return
+    // 房客入座仍是房客位置：房主位灰显暂离
+    expect(g.res.data.role).toBe('guest')
+    expect(g.res.data.room.redAway).toBe(true)
+
+    vi.advanceTimersByTime(3 * 60 * 1000)
+    expect(service.roomCount).toBe(1)   // 有坐席玩家接手，不销毁
+    const state = g.sock.last('room:state') as { hostName: string; redAway: boolean }
+    expect(state.hostName).toBe('客人')
+    expect(state.redAway).toBe(false)
+    expect(service.isPlayerInRoom('p1')).toBe(false)   // 原房主离场
+    expect(service.isPlayerInRoom('p2')).toBe(true)
+  })
+
+  it('房主暂离期间房客入座且房主返回：恢复房主身份，双活跃可开局', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+
+    service.handleDisconnect(hostSock as never)
+    await seatGuest(roomId)
+    const re = await service.joinRoom(roomId, 'p1', '小明', new FakeSocket() as never)
+    expect(re.ok).toBe(true)
+    if (!re.ok) return
+    expect(re.data.role).toBe('host')
+    expect(re.data.room.redAway).toBe(false)
+
+    vi.advanceTimersByTime(3 * 60 * 1000 + 1000)   // 暂离期已过：计时取消，房间保留
+    expect(service.roomCount).toBe(1)
+    expect((await service.startGame(roomId, 'p1')).ok).toBe(true)
+  })
+
+  it('房主断线（有坐席玩家）：立即转让所有权，无暂离期', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    const { sock: guestSock } = await seatGuest(roomId)
+
+    service.handleDisconnect(hostSock as never)
+    expect(service.roomCount).toBe(1)
+    const state = guestSock.last('room:state') as { hostName: string }
+    expect(state.hostName).toBe('客人')
+    expect(service.isPlayerInRoom('p1')).toBe(false)
+
+    vi.advanceTimersByTime(3 * 60 * 1000 + 1000)   // 无暂离计时，不销毁
+    expect(service.roomCount).toBe(1)
+  })
+
+  it('房客断线（等待期）：立即清空坐席，新房客可入座', async () => {
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    const { sock: guestSock } = await seatGuest(roomId)
+
+    service.handleDisconnect(guestSock as never)
+    expect(service.roomCount).toBe(1)
+    expect(service.isPlayerInRoom('p2')).toBe(false)
+
+    const g2 = await seatGuest(roomId, 'p4', '新客')
+    expect(g2.res.ok).toBe(true)
+    if (g2.res.ok) expect(g2.res.data.role).toBe('guest')
+  })
+
+  it('房客断线（对局中）：保留席位灰显，终局回 waiting 清空坐席', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    const { sock: guestSock } = await seatGuest(roomId)
+    await service.startGame(roomId, 'p1')
+
+    service.handleDisconnect(guestSock as never)
+    // 席位保留：房主视角蓝方灰显暂离
+    const state = hostSock.last('room:state') as { blueName: string | null; blueAway: boolean }
+    expect(state.blueName).toBe('客人')
+    expect(state.blueAway).toBe(true)
+    expect(service.isPlayerInRoom('p2')).toBe(true)
+
+    match.fireMatchEnded('m1')
+    const state2 = hostSock.last('room:state') as { blueName: string | null; blueAway: boolean }
+    expect(state2.blueName).toBeNull()
+    expect(service.isPlayerInRoom('p2')).toBe(false)
+    expect(service.roomCount).toBe(1)
+  })
+
+  it('房主断线（对局中）：保留席位，终局有房客在场则立即转让', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    const { sock: guestSock } = await seatGuest(roomId)
+    await service.startGame(roomId, 'p1')
+
+    service.handleDisconnect(hostSock as never)
+    const state = guestSock.last('room:state') as { redAway: boolean }
+    expect(state.redAway).toBe(true)
+    expect(service.isPlayerInRoom('p1')).toBe(true)   // 席位保留
+
+    match.fireMatchEnded('m1')
+    const state2 = guestSock.last('room:state') as { hostName: string; guestName: string | null }
+    expect(state2.hostName).toBe('客人')
+    expect(service.isPlayerInRoom('p1')).toBe(false)   // 原房主离场
+  })
+
+  it('房主+房客均断线（对局中）：终局后房主暂离计时，到期销毁', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    const { sock: guestSock } = await seatGuest(roomId)
+    await service.startGame(roomId, 'p1')
+
+    service.handleDisconnect(guestSock as never)
+    service.handleDisconnect(hostSock as never)
+    match.fireMatchEnded('m1')
+
+    // 房客未归被清空，房主暂离计时中：房间保留
+    expect(service.roomCount).toBe(1)
+    expect(service.isPlayerInRoom('p2')).toBe(false)
+    expect(service.isPlayerInRoom('p1')).toBe(true)
+
+    vi.advanceTimersByTime(3 * 60 * 1000)
+    expect(service.roomCount).toBe(0)
+  })
+
+  it('观战者断线：立即移出观战席', async () => {
+    const { res } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+    const { sock: specSock } = await seatGuest(roomId, 'p3', '路人')
+
+    service.handleDisconnect(specSock as never)
+    expect(service.roomCount).toBe(1)
+    expect(service.isPlayerInRoom('p3')).toBe(false)
+  })
+
   it('TTL 到期：房间自动回收并通知全员', async () => {
     const { res, sock: hostSock } = create()
     if (!res.ok) return

@@ -1,6 +1,6 @@
 /**
  * 规则引擎单元测试（vitest）。
- * 覆盖：克制/抵抗表（双属性择优与连乘）、回合抽牌（起始 3 张 + 每回合 1 张、不重洗）、
+ * 覆盖：克制/抵抗表（双属性择优与连乘）、回合抽牌（开局双发起始 3 张 + 此后每回合 1 张、不重洗）、
  * 落子与叠放（上限 8 层）、待胜阻断、跳过（换边抽牌 / 连续跳过平局 / 待胜期跳过判负）、
  * 平局（board_full 叠满 / both_skip 连续跳过）、认输。
  */
@@ -370,38 +370,36 @@ describe('双属性判定（进攻择优 × 防守连乘）', () => {
 })
 
 describe('回合抽牌', () => {
-  it('抽牌数：双方首个行动回合各 3 张，此后每回合 1 张', () => {
-    expect(dealCountFor(1)).toBe(3)
-    expect(dealCountFor(2)).toBe(3)
+  it('补牌数：起始手牌开局双发，前两回合不补牌，此后每回合 1 张', () => {
+    expect(dealCountFor(1)).toBe(0)
+    expect(dealCountFor(2)).toBe(0)
     expect(dealCountFor(3)).toBe(1)
     expect(dealCountFor(4)).toBe(1)
     expect(dealCountFor(9)).toBe(1)
   })
 
-  it('开局：红方第 1 回合自动发 3 张，直接可落子', () => {
+  it('开局：双方各自动发 3 张起始手牌（后手无需等到首次行动）', () => {
     const deck = Array.from({ length: 10 }, (_, i) => P(`dk${i}`, 'normal'))
     const s = createMatch({ deck })
     expect(s.phase).toBe('TURN_ACTION')
     expect(s.turnSide).toBe('red')
     expect(s.turnCount).toBe(1)
     expect(s.hands.red).toHaveLength(3)
-    expect(s.hands.blue).toHaveLength(0)
-    expect(s.deck).toHaveLength(7)
+    expect(s.hands.blue).toHaveLength(3)
+    expect(s.deck).toHaveLength(4)
     expect(s.board).toHaveLength(9)
   })
 
-  it('换边自动抽牌：对手首个行动回合发起始 3 张并产生 dealt 事件', () => {
+  it('换边不重复发牌：对手首个行动回合不再补起始手牌', () => {
     const s = makeState(['fire'], ['water'], ['normal', 'normal', 'normal', 'normal'])
     const ev = place(s, 'red', 0, 0)
     expect(s.turnSide).toBe('blue')
     expect(s.turnCount).toBe(2)
-    expect(s.hands.blue).toHaveLength(4)   // 原 1 张 + 首回合抽 3 张（累加）
-    const dealt = ev.find(e => e.type === 'dealt')
-    expect(dealt).toBeDefined()
-    if (dealt?.type === 'dealt') {
-      expect(dealt.side).toBe('blue')
-      expect(dealt.pieces).toHaveLength(3)
-    }
+    // 起始手牌已在开局双发：blue 保持原有 1 张，不补牌、无 dealt/shredded 事件
+    expect(s.hands.blue).toHaveLength(1)
+    expect(ev.some(e => e.type === 'dealt')).toBe(false)
+    expect(ev.some(e => e.type === 'shredded')).toBe(false)
+    expect(s.deck).toHaveLength(4)   // 牌堆未被消耗
   })
 
   it('落子后剩余手牌保留：落 1 抽 1，不作废不重发', () => {
@@ -428,14 +426,16 @@ describe('回合抽牌', () => {
 
   it('手牌跨回合累加：非首个行动回合每次只抽 1 张', () => {
     const s = makeState(
-      ['fire', 'fire', 'fire'],
+      ['fire'],
       ['water'],
       ['normal', 'normal', 'normal', 'normal'],
       { turnSide: 'blue', turnCount: 3 },
     )
     place(s, 'blue', 0, 3)   // blue 走完 → red 第 4 回合开始：仅抽 1 张
-    expect(s.hands.red).toHaveLength(4)                        // 3 原有 + 1 新抽
-    expect(s.hands.red.filter(p => p.id.startsWith('r'))).toHaveLength(3)   // 原牌保留
+    expect(s.hands.red).toHaveLength(2)   // 1 原有 + 1 新抽 = 2（未达上限，全部保留）
+    const dealt = place(s, 'red', 0, 0).find(e => e.type === 'dealt')
+    // blue 第 5 回合：1 原有 + 1 新抽 = 2
+    expect(dealt && dealt.type === 'dealt' ? dealt.pieces.length : 0).toBe(1)
   })
 
   it('牌堆耗尽不重洗：剩余不足抽多少算多少，为空则不再抽', () => {
@@ -455,6 +455,62 @@ describe('回合抽牌', () => {
     const ev = place(s, 'red', 0, 0)
     expect(s.hands.blue).toHaveLength(1)   // 不清理不补发
     expect(ev.some(e => e.type === 'dealt')).toBe(false)
+  })
+})
+
+describe('手牌上限撕牌（HAND_LIMIT=3，防跳过/拖时间囤牌）', () => {
+  it('初始发牌 3 张恰好等于上限，不触发撕牌', () => {
+    const s = createMatch({ deck: [...PRESET_DECK] })
+    expect(s.hands.red).toHaveLength(3)
+    expect(s.hands.blue).toHaveLength(3)
+  })
+
+  it('满 3 张出牌后：下回合抽 1 回到 3，不撕牌', () => {
+    const s = makeState(
+      ['fire', 'fire', 'fire'],
+      ['water'],
+      ['normal', 'normal', 'normal'],
+      { turnCount: 3 },
+    )
+    place(s, 'red', 0, 0)   // red 3→2，blue 回合 1+1=2
+    const ev = place(s, 'blue', 0, 3)   // red 回合：2+1=3 未超上限
+    expect(s.hands.red).toHaveLength(3)
+    expect(ev.some(e => e.type === 'shredded')).toBe(false)
+  })
+
+  it('满 3 张再抽：最新抽到的牌被撕毁（不进手牌、不回牌堆）', () => {
+    const s = makeState(
+      ['fire', 'fire', 'fire'],
+      ['water', 'water'],
+      ['electric', 'grass'],
+      { turnCount: 3 },
+    )
+    skip(s, 'red')   // → blue 回合：2+1=3 不撕（blue 抽走 dk0）
+    const ev = place(s, 'blue', 0, 3)   // → red 回合：3+1=4，撕最新抽的
+    const shred = ev.find(e => e.type === 'shredded')
+    expect(shred).toBeDefined()
+    expect(shred?.type === 'shredded' && shred.pieces.map(p => p.id)).toEqual(['dk1'])   // 撕的是本回合最新抽到的（dk0 已被 blue 抽走）
+    expect(s.hands.red).toHaveLength(3)
+    expect(s.hands.red.every(p => p.id.startsWith('r'))).toBe(true)   // 原有 3 张保留
+    expect(s.deck.some(p => p.id === 'dk0')).toBe(false)              // 不回牌堆
+  })
+
+  it('跳过无法囤牌：跳过+对手落子交替循环，手牌始终 ≤3', () => {
+    const s = makeState(
+      ['fire', 'fire', 'fire'],
+      ['water', 'water', 'water'],
+      ['normal', 'normal', 'normal', 'normal', 'normal', 'normal', 'normal', 'normal'],
+      { turnCount: 3 },
+    )
+    for (let i = 0; i < 4; i++) {
+      skip(s, 'red')            // red 跳过（满 3 抽 1 被撕/blue 补牌）
+      // blue 落空格打断连续跳过；选四边中点 1/3/5/7（任意三连线都经过中心或角，永不成三连，
+      // 避免触发 pendingWin 后 red 待胜期跳过被判负、对局提前结束）
+      place(s, 'blue', 0, 2 * i + 1)
+      expect(s.hands.red.length).toBeLessThanOrEqual(3)
+      expect(s.hands.blue.length).toBeLessThanOrEqual(3)
+    }
+    expect(s.result).toBeNull()   // 被落子打断，不触发 both_skip
   })
 })
 
@@ -734,16 +790,25 @@ describe('平局判定', () => {
 
 describe('跳过回合', () => {
   it('跳过不消耗手牌，正常换边并由对手抽牌', () => {
-    const s = makeState(['fire'], ['water'], ['normal', 'normal', 'normal'])
+    const s = makeState(['fire'], ['water'], ['normal'], { turnCount: 3 })
     const ev = skip(s, 'red')
     expect(ev[0]).toEqual({ type: 'skipped', side: 'red' })
     expect(s.turnSide).toBe('blue')
-    expect(s.turnCount).toBe(2)
+    expect(s.turnCount).toBe(4)
     expect(s.lastSkipped).toBe('red')
     expect(s.hands.red).toHaveLength(1)          // 手牌不消耗
-    expect(s.hands.blue).toHaveLength(4)         // 原 1 张 + 首回合抽 3 张
+    expect(s.hands.blue).toHaveLength(2)         // 原 1 张 + 换边抽 1
     const dealt = ev.find(e => e.type === 'dealt')
-    expect(dealt && dealt.type === 'dealt' ? dealt.pieces.length : 0).toBe(3)
+    expect(dealt && dealt.type === 'dealt' ? dealt.pieces.length : 0).toBe(1)
+  })
+
+  it('首个行动回合跳过：对手已持起始手牌，换边不补牌', () => {
+    const s = makeState(['fire'], ['water'], ['normal'])
+    const ev = skip(s, 'red')   // turnCount 1→2：对手首个行动回合不补牌
+    expect(s.turnCount).toBe(2)
+    expect(s.hands.blue).toHaveLength(1)
+    expect(ev.some(e => e.type === 'dealt')).toBe(false)
+    expect(s.deck).toHaveLength(1)   // 牌堆未被消耗
   })
 
   it('双方连续跳过 → 平局（both_skip）', () => {

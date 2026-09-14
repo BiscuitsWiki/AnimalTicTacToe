@@ -6,8 +6,8 @@ import {
 } from '../../core/engine'
 import { ELEMENT_COLORS, ELEMENT_NAMES_ZH } from '../../core/elements'
 import { aiChoosePlacement } from '../../core/ai'
-import { STACK_LIMIT } from '../../core/types'
-import type { MatchState, PlaceEvent, Side } from '../../core/types'
+import { HAND_LIMIT, STACK_LIMIT } from '../../core/types'
+import type { MatchState, Piece, PlaceEvent, Side } from '../../core/types'
 import { buildDeckFromServer } from '../../services/deckSource'
 import type { DeckSource } from '../../services/deckSource'
 import { REPORT_REASONS, reportAiResult, reportPiece } from '../../services/api'
@@ -34,6 +34,9 @@ interface RoomStateView {
   /** 对局结束后各坐席是否已点"返回房间"（未返回方大厅灰显） */
   redReturned: boolean
   blueReturned: boolean
+  /** 坐席玩家断线暂离（左滑/关闭页面；席位保留灰显，重连恢复） */
+  redAway: boolean
+  blueAway: boolean
 }
 
 interface PvpContext {
@@ -47,6 +50,8 @@ const RECONNECT_MAX_TRIES = 8
 const RECONNECT_WAIT_MS = 3000
 /** 回合倒计时（毫秒）：超时未行动自动跳过（与服务端 TURN_TIMEOUT_MS 保持一致） */
 const TURN_TIMEOUT_MS = 30_000
+/** 手牌上限撕牌动效时长（毫秒）：动效期间撕牌 overlay 不可点击 */
+const SHRED_FX_MS = 1200
 
 function matchFrom(src: DeckSource): MatchState {
   return createMatch({ deck: src.deck })
@@ -61,6 +66,8 @@ function eventToText(e: PlaceEvent): string {
         : `${sideNameZh(e.side)}在${pos(e.cellIdx)}放下了「${e.piece.name}」`
     case 'dealt':
       return `${sideNameZh(e.side)}抽到 ${e.pieces.length} 张手牌`
+    case 'shredded':
+      return `${sideNameZh(e.side)}手牌已满 ${HAND_LIMIT} 张，新抽的「${e.pieces.map(p => p.name).join('」「')}」被撕毁`
     case 'pending_win':
       return `${sideNameZh(e.side)}三连！${sideNameZh(e.side === 'red' ? 'blue' : 'red')}有一回合的阻断机会`
     case 'blocked':
@@ -133,6 +140,24 @@ export default function Battle () {
     setLog(prev => [...lines, ...prev].slice(0, 30))
   }
 
+  /** 手牌上限撕牌动效：shredded 事件触发，短暂展示被撕的牌（overlay 指针穿透，不可点击） */
+  const [shredFx, setShredFx] = useState<{ key: number; pieces: Piece[] } | null>(null)
+  const shredKeyRef = useRef(0)
+
+  /** 事件统一消费：战报文案 + 撕牌动效（联机 game:state 与本地结算共用） */
+  const consumeEvents = (events: PlaceEvent[]) => {
+    if (events.length > 0) pushLog(events.map(eventToText))
+    const shred = events.find((e): e is Extract<PlaceEvent, { type: 'shredded' }> => e.type === 'shredded')
+    if (shred && shred.pieces.length > 0) {
+      shredKeyRef.current += 1
+      const key = shredKeyRef.current
+      setShredFx({ key, pieces: shred.pieces })
+      setTimeout(() => {
+        setShredFx(cur => (cur?.key === key ? null : cur))
+      }, SHRED_FX_MS)
+    }
+  }
+
   /** 长按棋子弹出举报面板（占位棋子不可举报） */
   const onPieceLongPress = (piece: { id: string; name: string }) => {
     if (piece.id.startsWith('sys') || piece.id.startsWith('hidden-')) return
@@ -161,7 +186,7 @@ export default function Battle () {
       setMatch(d.state)
       setTurnEndsAt(d.turnDeadline ?? null)
       if (d.state.result) endedRef.current = true
-      if (d.events?.length) pushLog(d.events.map(eventToText))
+      if (d.events?.length) consumeEvents(d.events)
     })
     socket.on('match:ended', (d: { reason?: string }) => {
       endedRef.current = true
@@ -441,10 +466,16 @@ export default function Battle () {
       Taro.showToast({ title: d.error === 'match_running' ? '对局中不可换边' : '暂时无法换边', icon: 'none' })
     })
 
-    // 房间解散（房主退出无坐席/TTL）
+    // 房间解散（房主退出无坐席/TTL/房主暂离超时）
     socket.on('room:closed', (d: { reason?: string }) => {
       if (pvpRef.current || spectating) return   // 对局中断线由宽限逻辑处理
-      setJoinError(d?.reason === 'ttl_expired' ? '房间超时未活动，已自动解散' : '房间已解散')
+      setJoinError(
+        d?.reason === 'ttl_expired'
+          ? '房间超时未活动，已自动解散'
+          : d?.reason === 'host_away_expired'
+            ? '房主暂离超时，房间已解散'
+            : '房间已解散',
+      )
       setWaiting(false)
     })
 
@@ -572,7 +603,7 @@ export default function Battle () {
         : skip(ns, 'blue')
       setMatch(ns)
       setSelected(null)
-      pushLog(events.map(eventToText))
+      consumeEvents(events)
     }, 700)
     return () => clearTimeout(timer)
   }, [match, mode])
@@ -596,9 +627,10 @@ export default function Battle () {
       const ns = cloneState(match)
       try {
         const events = skip(ns, mySide)
+        if (events[0]?.type === 'skipped') events[0] = { ...events[0], timeout: true }
         setMatch(ns)
         setSelected(null)
-        pushLog(['你的回合超时，自动跳过', ...events.map(eventToText)])
+        consumeEvents(events)
       } catch { /* 回合已变化：忽略 */ }
     }, remain)
     return () => clearTimeout(timer)
@@ -647,7 +679,7 @@ export default function Battle () {
     const events = place(ns, mySide, selected, cellIdx)
     setMatch(ns)
     setSelected(null)
-    pushLog(events.map(eventToText))
+    consumeEvents(events)
   }
 
   /**
@@ -665,7 +697,7 @@ export default function Battle () {
     const events = skip(ns, mySide)
     setMatch(ns)
     setSelected(null)
-    pushLog(events.map(eventToText))
+    consumeEvents(events)
   }
 
   /** 确认认输：本地（人机）直接结算；联机/房间发服务端裁决 */
@@ -677,7 +709,7 @@ export default function Battle () {
       const events = resign(ns, mySide)
       setMatch(ns)
       setSelected(null)
-      pushLog(events.map(eventToText))
+      consumeEvents(events)
     } else {
       pvpRef.current?.socket.send('game:resign', {})
     }
@@ -836,12 +868,12 @@ export default function Battle () {
 
   // 匹配中 / 房间等待 / 加载中：占位屏
   if (waiting || !match) {
-    // 加入失败/建房失败：错误提示 + 返回
+    // 加入失败/建房失败：错误提示 + 返回（直链进入时页面栈为空，兜底 reLaunch 回主菜单）
     if (joinError) {
       return (
         <View className='battle battle--loading'>
           <Text className='battle__loading-text'>{joinError}</Text>
-          <View className='battle__back' onClick={() => Taro.navigateBack()}>
+          <View className='battle__back' onClick={goBackToMenu}>
             <Text>返回</Text>
           </View>
         </View>
@@ -857,9 +889,13 @@ export default function Battle () {
       const blueSeated = !!roomState?.blueName
       /** 大厅渲染用房间码：state 兜底链 roomState / URL 参数，避免断线恢复路径下误显示"正在加入房间" */
       const lobbyRoomId = roomId || roomState?.roomId || joinRoomId
-      /** 对局结束后的返回等待：坐席已入座但未点"返回房间"时名字灰显 */
-      const redAway = redSeated && awaitingReturn && !roomState?.redReturned
-      const blueAway = blueSeated && awaitingReturn && !roomState?.blueReturned
+      /** 坐席灰显标注：断线暂离（服务端权威）优先，其次对局结束未点"返回房间" */
+      const redNote = redSeated && roomState?.redAway
+        ? '（暂离）'
+        : redSeated && awaitingReturn && !roomState?.redReturned ? '（未返回）' : ''
+      const blueNote = blueSeated && roomState?.blueAway
+        ? '（暂离）'
+        : blueSeated && awaitingReturn && !roomState?.blueReturned ? '（未返回）' : ''
       return (
         <View className='battle battle--lobby'>
           <Text className='battle__lobby-title'>
@@ -870,9 +906,9 @@ export default function Battle () {
               <View className='battle__seats'>
                 <View className='battle__seat battle__seat--red'>
                   <Text className='battle__seat-side'>红方坐席（先手）</Text>
-                  <Text className={`battle__seat-name ${redSeated ? '' : 'battle__seat-name--empty'} ${redAway ? 'battle__seat-name--away' : ''}`}>
+                  <Text className={`battle__seat-name ${redSeated ? '' : 'battle__seat-name--empty'} ${redNote ? 'battle__seat-name--away' : ''}`}>
                     {roomState?.redName || '等待入座…'}
-                    {redAway ? '（未返回）' : ''}
+                    {redNote}
                   </Text>
                   {roomState?.hostName === roomState?.redName && redSeated && (
                     <Text className='battle__seat-tag'>房主</Text>
@@ -880,9 +916,9 @@ export default function Battle () {
                 </View>
                 <View className='battle__seat battle__seat--blue'>
                   <Text className='battle__seat-side'>蓝方坐席（后手）</Text>
-                  <Text className={`battle__seat-name ${blueSeated ? '' : 'battle__seat-name--empty'} ${blueAway ? 'battle__seat-name--away' : ''}`}>
+                  <Text className={`battle__seat-name ${blueSeated ? '' : 'battle__seat-name--empty'} ${blueNote ? 'battle__seat-name--away' : ''}`}>
                     {roomState?.blueName || '等待入座…'}
-                    {blueAway ? '（未返回）' : ''}
+                    {blueNote}
                   </Text>
                   {roomState?.hostName === roomState?.blueName && blueSeated && (
                     <Text className='battle__seat-tag'>房主</Text>
@@ -1116,13 +1152,42 @@ export default function Battle () {
         )}
       </View>
 
+      {/* 手牌上限撕牌动效：shredded 事件触发，两半撕裂飞散（指针穿透，动效期间不可点击） */}
+      {shredFx && (
+        <View className='shred-fx' key={shredFx.key}>
+          {shredFx.pieces.map((p, i) => (
+            <View className='shred-fx__card' key={`${p.id}-${i}`}>
+              <View className='shred-fx__half shred-fx__half--top'>
+                <Text
+                  className='shred-fx__el'
+                  style={`background: ${ELEMENT_COLORS[p.element]}`}
+                >
+                  {ELEMENT_NAMES_ZH[p.element]}
+                </Text>
+                <Text className='shred-fx__name'>{p.name}</Text>
+              </View>
+              <View className='shred-fx__half shred-fx__half--bottom'>
+                <Text
+                  className='shred-fx__el'
+                  style={`background: ${ELEMENT_COLORS[p.element]}`}
+                >
+                  {ELEMENT_NAMES_ZH[p.element]}
+                </Text>
+                <Text className='shred-fx__name'>{p.name}</Text>
+              </View>
+            </View>
+          ))}
+          <Text className='shred-fx__label'>手牌已满 {HAND_LIMIT} 张，新抽的牌被撕毁</Text>
+        </View>
+      )}
+
       {/* 手牌（观战者只读：双方手牌隐藏） */}
       <View className='hand'>
         <View className='hand__title'>
           <Text>
             {spectating
               ? `观战中 · ${specNames.red}手牌 ${match.hands.red.length} 张 / ${specNames.blue}手牌 ${match.hands.blue.length} 张（内容隐藏）`
-              : `你的手牌（${hand.length} 张）· 你是${sideNameZh(mySide)}`}
+              : `你的手牌（${hand.length}/${HAND_LIMIT} 张）· 你是${sideNameZh(mySide)}`}
           </Text>
         </View>
         {!spectating && (

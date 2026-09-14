@@ -1,8 +1,8 @@
 /**
  * 回合抽牌制 WS 冒烟：
- * 1. 双人匹配开局 → 初始红方 3 张、蓝 0 张、turnCount=1、phase=TURN_ACTION
- * 2. 红落子 → 蓝方首回合发起始 3 张（dealt 事件）：蓝视角明文、红视角脱敏 '?'
- * 3. 蓝落子 → 红方回合开始抽 1 张（第 3 回合，手牌累加 2+1=3）：红视角明文、蓝视角脱敏
+ * 1. 双人匹配开局 → 开局即向双方各发起始手牌 3 张（后手无需等到首次行动）、turnCount=1、phase=TURN_ACTION
+ * 2. 红落子 → 蓝方回合开始：起始手牌已开局双发，不补牌、无 dealt 事件；红方剩余手牌保留
+ * 3. 蓝落子 → 红方回合开始（第 3 回合）：抽 1 张，手牌累加 2+1=3：红视角明文、蓝视角脱敏
  */
 import WebSocket from 'ws'
 
@@ -69,22 +69,22 @@ assert(redView0.state.turnCount === 1, '初始 turnCount=1')
 assert(redView0.state.phase === 'TURN_ACTION', '开局即行动阶段（无抽牌阶段）')
 assert(redView0.state.hands.red.length === 3, '红方开局自动发 3 张')
 assert(redView0.state.hands.red.every(p => p.name !== '?'), '红方自己手牌明文')
-assert(blueView0.state.hands.blue.length === 0, '蓝方开局 0 张')
+assert(blueView0.state.hands.blue.length === 3, '蓝方开局即持有起始 3 张（后手无需等到首次行动）')
+assert(blueView0.state.hands.blue.every(p => p.name !== '?'), '蓝方自己手牌明文')
 assert(blueView0.state.hands.red.every(p => p.name === '?'), '蓝视角红方手牌隐藏')
+assert(redView0.state.hands.blue.every(p => p.name === '?'), '红视角蓝方手牌隐藏')
 
-// 红落子 → 蓝方回合开始：首回合发起始 3 张；红方剩余手牌保留
+// 红落子 → 蓝方回合开始：起始手牌已开局双发，不补牌；红方剩余手牌保留
 red.send('game:place', { handIdx: 0, cellIdx: 0 })
 const redView1 = await red.wait('game:state')
 const blueView1 = await blue.wait('game:state')
 assert(redView1.state.turnCount === 2 && redView1.state.turnSide === 'blue', '换边后 turnCount=2 轮蓝方')
-assert(blueView1.state.hands.blue.length === 3, '蓝方首回合发起始 3 张')
+assert(blueView1.state.hands.blue.length === 3, '蓝方首个行动回合保持起始 3 张（不补牌）')
 assert(blueView1.state.hands.blue.every(p => p.name !== '?'), '蓝方自己手牌明文')
 assert(redView1.state.hands.red.length === 2, '红方落子后剩余 2 张手牌保留')
 assert(redView1.state.lastPlaced.red === 0, 'lastPlaced 记录红方最近落子格')
 assert(blueView1.state.lastPlaced.red === 0, '对手视角同步 lastPlaced')
-const dealtRed = redView1.events.find(e => e.type === 'dealt')
-assert(!!dealtRed && dealtRed.pieces.length === 3, '红视角收到蓝方 dealt 事件（3 张）')
-assert(dealtRed.pieces.every(p => p.name === '?'), '红视角蓝方发牌内容脱敏为 ?')
+assert(!redView1.events.some(e => e.type === 'dealt' || e.type === 'shredded'), '换边无补牌/撕牌事件')
 
 // 蓝落子 → 红方回合开始（第 3 回合）：抽 1 张，手牌累加 2+1=3
 blue.send('game:place', { handIdx: 0, cellIdx: 3 })

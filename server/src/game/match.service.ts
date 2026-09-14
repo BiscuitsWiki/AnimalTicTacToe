@@ -38,7 +38,7 @@ export interface Spectator {
 interface ActionRecord {
   seq: number
   side: Side
-  type: 'place' | 'deal' | 'skip' | 'resign'
+  type: 'place' | 'deal' | 'shred' | 'skip' | 'resign'
   payload: Record<string, unknown>
 }
 
@@ -257,6 +257,10 @@ export class MatchService {
         if (e.type === 'dealt') {
           this.record(room, e.side, 'deal', { count: e.pieces.length })
         }
+        // 棋谱记录手牌上限撕牌
+        if (e.type === 'shredded') {
+          this.record(room, e.side, 'shred', { count: e.pieces.length })
+        }
       }
       if (room.state.result) {
         this.endMatch(room, room.state.result.winner, room.state.result.reason)
@@ -281,10 +285,13 @@ export class MatchService {
     try {
       const events = skip(room.state, player.side)
       this.record(room, player.side, 'skip', {})
-      // 棋谱记录跳过后对手的自动抽牌
+      // 棋谱记录跳过后对手的自动抽牌/撕牌
       for (const e of events) {
         if (e.type === 'dealt') {
           this.record(room, e.side, 'deal', { count: e.pieces.length })
+        }
+        if (e.type === 'shredded') {
+          this.record(room, e.side, 'shred', { count: e.pieces.length })
         }
       }
       if (room.state.result) {
@@ -469,6 +476,9 @@ export class MatchService {
         if (e.type === 'dealt') {
           this.record(room, e.side, 'deal', { count: e.pieces.length })
         }
+        if (e.type === 'shredded') {
+          this.record(room, e.side, 'shred', { count: e.pieces.length })
+        }
       }
       // skip() 会原地修改 state（可能产生终局），显式重读绕过入口卫兵的类型收窄
       const result = room.state.result as MatchResult | null
@@ -501,10 +511,10 @@ export class MatchService {
     if (room.spectators.length > 0) this.sendSpectatorView(room, events)
   }
 
-  /** 事件视角化：dealt 事件中非查看者阵营的牌面替换为占位（防泄密） */
+  /** 事件视角化：dealt/shredded 事件中非查看者阵营的牌面替换为占位（防泄密） */
   private sanitizeEvents(events: PlaceEvent[], viewerSide: Side | 'spectator'): PlaceEvent[] {
     return events.map(e =>
-      e.type === 'dealt' && e.side !== viewerSide
+      (e.type === 'dealt' || e.type === 'shredded') && e.side !== viewerSide
         ? { ...e, pieces: e.pieces.map(() => hiddenPiece()) }
         : e,
     )

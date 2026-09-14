@@ -2,7 +2,9 @@
  * P4.1 房间服务：坐席制好友约战房间（内存表）。
  * 坐席：房主 + 一位挑战者，阵营由 swapped 标记决定（默认房主红方，房主可换边选先后手）；其余加入者进观战席。
  * 生命周期：创建(waiting) → 双方入座 → 房主点"开始对局"(playing) → 终局回 waiting（可反复开局）。
- * 房主退出（主动/断线）时所有权自动转让给另一位坐席玩家；无坐席玩家则解散房间。
+ * 主动退出（room:leave，点"退出房间"）：房主所有权自动转让给另一位坐席玩家；无坐席玩家则立即解散房间。
+ * 断线暂离（左滑/关闭页面）：对局中保留席位（重连恢复）；等待期房主无坐席玩家时保留房间 3 分钟
+ * （可用 ROOM_AWAY_GRACE_MS 覆盖），到期有坐席玩家接手所有权、无人则解散。
  * TTL 2 小时无活动自动回收（可用 ROOM_TTL_MS 覆盖）。
  */
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common'
@@ -14,6 +16,8 @@ const ROOM_CODE_ALPHABET = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'
 const ROOM_CODE_LEN = 6
 /** 房间无活动回收时间（毫秒） */
 const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS ?? 2 * 60 * 60 * 1000)
+/** 房主暂离保留时间（毫秒）：左滑/断线后无坐席玩家时房间保留 3 分钟（可用 ROOM_AWAY_GRACE_MS 覆盖） */
+const ROOM_AWAY_GRACE_MS = Number(process.env.ROOM_AWAY_GRACE_MS ?? 3 * 60 * 1000)
 /** 房间码碰撞重试上限 */
 const CODE_RETRY = 5
 /** 观战席人数上限 */
@@ -37,6 +41,10 @@ export interface RoomStateView {
   /** 对局结束后各坐席是否已点"返回房间"（waiting 阶段语义；playing/开局时重置） */
   redReturned: boolean
   blueReturned: boolean
+  /** 红方坐席玩家断线暂离（席位保留灰显；重连恢复） */
+  redAway: boolean
+  /** 蓝方坐席玩家断线暂离（席位保留灰显；重连恢复） */
+  blueAway: boolean
 }
 
 export type RoomResult<T = undefined> =
@@ -47,6 +55,8 @@ interface RoomMember {
   playerId: string
   name: string
   socket: ClientSocket
+  /** 断线暂离标记（左滑/关闭页面，非主动退出）：席位保留、重连恢复 */
+  away: boolean
 }
 
 interface Room {
@@ -68,6 +78,8 @@ interface Room {
   createdAt: Date
   /** TTL 回收定时器（每次活动重置） */
   ttlTimer: NodeJS.Timeout
+  /** 房主暂离到期定时器（waiting 期无坐席玩家断线时启动；房主重连/转让/销毁时清除） */
+  hostAwayTimer: NodeJS.Timeout | null
 }
 
 @Injectable()
@@ -88,6 +100,18 @@ export class RoomService implements OnModuleInit {
           room.matchId = null
           room.redReturned = false   // 对局结束：重置返回标记，等双方点"返回房间"
           room.blueReturned = false
+          // 对局中保留的断线席位在终局一并处理：房客未归 → 清空坐席；房主未归 → 有坐席玩家立即转让，无则暂离计时
+          if (room.guest?.away) {
+            this.playerRoom.delete(room.guest.playerId)
+            room.guest = null
+          }
+          if (room.host.away) {
+            if (room.guest && !room.guest.away) {
+              this.transferOnHostGone(room)
+            } else {
+              room.hostAwayTimer = setTimeout(() => this.expireHostAway(room), ROOM_AWAY_GRACE_MS)
+            }
+          }
           this.broadcastState(room)
           this.logger.log(`room ${room.roomId}: match ended, back to waiting`)
         }
@@ -103,7 +127,7 @@ export class RoomService implements OnModuleInit {
     const roomId = this.genRoomCode()
     const room: Room = {
       roomId,
-      host: { playerId, name, socket },
+      host: { playerId, name, socket, away: false },
       guest: null,
       swapped: false,
       spectators: [],
@@ -113,6 +137,7 @@ export class RoomService implements OnModuleInit {
       blueReturned: false,
       createdAt: new Date(),
       ttlTimer: setTimeout(() => this.dispose(roomId, 'ttl_expired'), ROOM_TTL_MS),
+      hostAwayTimer: null,
     }
     this.rooms.set(roomId, room)
     this.playerRoom.set(playerId, roomId)
@@ -143,9 +168,9 @@ export class RoomService implements OnModuleInit {
 
     this.refreshTtl(room)
 
-    // 蓝方坐席空且未开局：入座
+    // 蓝方坐席空且未开局：入座（房主暂离期间同样可入座，位置仍是房客）
     if (!room.guest && room.phase === 'waiting') {
-      room.guest = { playerId, name, socket }
+      room.guest = { playerId, name, socket, away: false }
       this.playerRoom.set(playerId, roomId)
       this.logger.log(`room ${roomId}: ${name} seated as guest`)
       this.broadcastState(room)
@@ -156,7 +181,7 @@ export class RoomService implements OnModuleInit {
     if (room.spectators.length >= SPECTATOR_LIMIT) {
       return { ok: false, error: 'spectator_full' }
     }
-    room.spectators.push({ playerId, name, socket })
+    room.spectators.push({ playerId, name, socket, away: false })
     this.playerRoom.set(playerId, roomId)
     this.logger.log(`room ${roomId}: ${name} joined as spectator`)
     this.broadcastState(room)
@@ -241,9 +266,9 @@ export class RoomService implements OnModuleInit {
   }
 
   /**
-   * 退出房间（room:leave 或断线）。
+   * 主动退出房间（room:leave，点"退出房间"按钮）。
    * 优先按 socket 定位成员；socket 未命中（客户端重连后引用过期等）时按 playerId 兜底。
-   * 房主退出：有坐席玩家 → 所有权自动转让；无 → 解散房间并通知全员。
+   * 房主退出：有坐席玩家 → 所有权自动转让；无 → 立即解散房间并通知全员。
    */
   leaveRoom(socket: ClientSocket, playerId?: string): void {
     let room = this.roomOfSocket(socket)
@@ -268,14 +293,7 @@ export class RoomService implements OnModuleInit {
 
     if (member === 'host') {
       if (room.guest) {
-        const oldHost = room.host
-        const newHost = room.guest
-        room.host = newHost
-        room.guest = null
-        room.swapped = !room.swapped   // 所有权转移，坐席颜色保持不变
-        this.playerRoom.delete(oldHost.playerId)   // 旧房主离场
-        this.logger.log(`room ${room.roomId}: host left, host transferred to ${newHost.name}`)
-        this.broadcastState(room)
+        this.transferOnHostGone(room)
         return
       }
       this.dispose(room.roomId, 'host_left')
@@ -297,20 +315,104 @@ export class RoomService implements OnModuleInit {
     }
   }
 
-  /** 连接断开：等同退出房间（对局中的宽限判负由 MatchService 处理） */
+  /**
+   * 连接断开（左滑/关闭网页 = 暂离，非主动退出）。
+   * 对局中（playing）：坐席玩家保留席位（重连 rebindSocket/rejoinRoom 恢复；宽限判负由 MatchService 处理）。
+   * 等待期（waiting）：房主有坐席玩家 → 立即转让所有权；无 → 房间保留 3 分钟（房主席位灰显，期间他人入座仍是房客）。
+   * 房客等待期断线 → 立即清空坐席；观战者断线 → 立即移出观战席。
+   */
   handleDisconnect(socket: ClientSocket): void {
-    this.leaveRoom(socket)
+    const room = this.roomOfSocket(socket)
+    if (!room) return
+    if (room.host.socket === socket) return this.disconnectHost(room)
+    if (room.guest?.socket === socket) return this.disconnectGuest(room)
+    const idx = room.spectators.findIndex(s => s.socket === socket)
+    if (idx >= 0) {
+      this.playerRoom.delete(room.spectators[idx].playerId)
+      room.spectators.splice(idx, 1)
+      this.broadcastState(room)
+    }
   }
 
-  /** 对局断线重连后：房间成员 socket 重绑（大厅广播可达） */
+  /** 房主断线：playing 保留席位；waiting 有坐席玩家立即转让、无则暂离计时 */
+  private disconnectHost(room: Room): void {
+    room.host.away = true
+    if (room.phase === 'playing') {
+      this.broadcastState(room)
+      return
+    }
+    if (room.guest) {
+      this.transferOnHostGone(room)
+      return
+    }
+    this.clearHostAwayTimer(room)
+    room.hostAwayTimer = setTimeout(() => this.expireHostAway(room), ROOM_AWAY_GRACE_MS)
+    this.broadcastState(room)
+    this.logger.log(`room ${room.roomId}: host away, grace ${ROOM_AWAY_GRACE_MS}ms`)
+  }
+
+  /** 房客断线：playing 保留席位至对局结束；waiting 立即清空坐席 */
+  private disconnectGuest(room: Room): void {
+    if (room.phase === 'playing') {
+      room.guest!.away = true
+      this.broadcastState(room)
+      return
+    }
+    this.playerRoom.delete(room.guest!.playerId)
+    room.guest = null
+    this.broadcastState(room)
+  }
+
+  /** 房主暂离到期：已重连恢复则无操作；有坐席玩家在场则接手所有权；无人则解散房间 */
+  private expireHostAway(room: Room): void {
+    room.hostAwayTimer = null
+    if (!this.rooms.has(room.roomId) || !room.host.away) return
+    if (room.guest && !room.guest.away) {
+      this.transferOnHostGone(room)
+      return
+    }
+    this.dispose(room.roomId, 'host_away_expired')
+  }
+
+  /** 房主离场（主动退出/断线转让/暂离到期接手）：所有权转让给坐席玩家，坐席颜色不变 */
+  private transferOnHostGone(room: Room): void {
+    const oldHost = room.host
+    const newHost = room.guest!
+    this.clearHostAwayTimer(room)
+    room.host = newHost
+    room.guest = null
+    room.swapped = !room.swapped   // 所有权转移，坐席颜色保持不变
+    this.playerRoom.delete(oldHost.playerId)   // 旧房主离场
+    this.logger.log(`room ${room.roomId}: host gone, transferred to ${newHost.name}`)
+    this.broadcastState(room)
+  }
+
+  private clearHostAwayTimer(room: Room): void {
+    if (room.hostAwayTimer) {
+      clearTimeout(room.hostAwayTimer)
+      room.hostAwayTimer = null
+    }
+  }
+
+  /** 房主重连恢复：清暂离标记与暂离计时 */
+  private markHostBack(room: Room): void {
+    room.host.away = false
+    this.clearHostAwayTimer(room)
+  }
+
+  /** 对局断线重连后：房间成员 socket 重绑（大厅广播可达），暂离标记一并恢复 */
   rebindSocket(playerId: string, socket: ClientSocket): void {
     const roomId = this.playerRoom.get(playerId)
     if (!roomId) return
     const room = this.rooms.get(roomId)
     if (!room) return
-    if (room.host.playerId === playerId) room.host.socket = socket
-    else if (room.guest?.playerId === playerId) room.guest.socket = socket
-    else {
+    if (room.host.playerId === playerId) {
+      room.host.socket = socket
+      this.markHostBack(room)
+    } else if (room.guest?.playerId === playerId) {
+      room.guest.socket = socket
+      room.guest.away = false
+    } else {
       const s = room.spectators.find(x => x.playerId === playerId)
       if (s) s.socket = socket
     }
@@ -325,8 +427,13 @@ export class RoomService implements OnModuleInit {
 
     if (room.host.playerId === playerId || room.guest?.playerId === playerId) {
       const isHost = room.host.playerId === playerId
-      if (isHost) room.host.socket = socket
-      else room.guest!.socket = socket
+      if (isHost) {
+        room.host.socket = socket
+        this.markHostBack(room)   // 暂离恢复：清标记与暂离计时
+      } else {
+        room.guest!.socket = socket
+        room.guest!.away = false
+      }
       this.logger.log(`room ${room.roomId}: ${isHost ? 'host' : 'guest'} rejoined`)
       this.broadcastState(room)
       // 对局进行中：恢复对局视角（match:reconnected + 棋盘快照）
@@ -423,6 +530,8 @@ export class RoomService implements OnModuleInit {
       spectatorCount: room.spectators.length,
       redReturned: room.redReturned,
       blueReturned: room.blueReturned,
+      redAway: this.seatMember(room, 'red')?.away ?? false,
+      blueAway: this.seatMember(room, 'blue')?.away ?? false,
     }
   }
 
@@ -472,6 +581,7 @@ export class RoomService implements OnModuleInit {
     const room = this.rooms.get(roomId)
     if (!room) return
     clearTimeout(room.ttlTimer)
+    this.clearHostAwayTimer(room)
     this.rooms.delete(roomId)
     const members = [room.host, ...(room.guest ? [room.guest] : []), ...room.spectators]
     for (const m of members) {

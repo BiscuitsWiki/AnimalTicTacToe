@@ -1,10 +1,12 @@
 /**
  * 回合状态机与落子结算（服务端权威裁决入口）。
- * 与 client/src/core/engine.ts 保持同步拷贝。
+ * 与 client/src/core/engine.ts 保持同步拷贝（仅 import 需带 .js 扩展名）。
  *
  * 核心规则（见 ../docs 或架构文档 3.3）：
- * - 抽牌制：双方首个行动回合各发起始手牌 3 张，此后每次轮到行动时从牌堆抽 1 张；
- *   手牌跨回合保留（落 1 抽 1）；牌堆抽完即止，不重洗回牌堆
+ * - 抽牌制：开局即向双方各发起始手牌 3 张（后手第 1 回合即可见手牌），
+ *   此后每次轮到行动时从牌堆抽 1 张；手牌跨回合保留（落 1 抽 1）；牌堆抽完即止，不重洗回牌堆
+ * - 手牌上限 3：抽牌后超出上限的最新抽到的牌直接撕毁（不进手牌、不回牌堆），
+ *   防跳过/拖时间囤牌
  * - 行动二选一：落在空格，或克制叠放在对方格上；每次行动只占据一格；
  *   也可跳过本回合（不落子，正常换边抽牌）
  * - 叠放前置条件：① 目标格属对方 ② 叠放未满 8 层 ③ 行动棋子克制对方最上层
@@ -14,7 +16,7 @@
  */
 import { canCapture } from './elements.js'
 import {
-  BOARD_SIZE, RuleError, STACK_LIMIT, TURN_DEAL_BASE, TURN_DRAW_COUNT,
+  BOARD_SIZE, HAND_LIMIT, RuleError, STACK_LIMIT, TURN_DEAL_BASE, TURN_DRAW_COUNT,
 } from './types.js'
 import type {
   Cell, MatchState, Piece, PlaceEvent, Side,
@@ -44,16 +46,19 @@ function emptyBoard(): Cell[] {
   return Array.from({ length: BOARD_SIZE }, () => ({ stack: [] }))
 }
 
-/** 第 turnCount 回合的开始抽牌数：双方首个行动回合（1、2）发 3 张，之后每回合抽 1 张 */
+/**
+ * 第 turnCount 回合的开始补牌数：起始手牌已在开局双发，双方各自首个行动回合（1、2）
+ * 不再补牌，之后每回合抽 1 张。
+ */
 export function dealCountFor(turnCount: number): number {
-  return turnCount <= 2 ? TURN_DEAL_BASE : TURN_DRAW_COUNT
+  return turnCount <= 2 ? 0 : TURN_DRAW_COUNT
 }
 
 export interface CreateMatchOptions {
   deck: Piece[]
 }
 
-/** 创建对局：红方先行（第 1 回合，发起始手牌 3 张） */
+/** 创建对局：红方先行（第 1 回合）；开局即向双方各发起始手牌 3 张（后手无需等到首次行动才见牌） */
 export function createMatch({ deck }: CreateMatchOptions): MatchState {
   const state: MatchState = {
     phase: 'TURN_ACTION',
@@ -67,23 +72,46 @@ export function createMatch({ deck }: CreateMatchOptions): MatchState {
     pendingWin: null,
     result: null,
   }
-  dealTo(state, 'red')
+  dealTo(state, 'red', TURN_DEAL_BASE)
+  dealTo(state, 'blue', TURN_DEAL_BASE)
   return state
 }
 
 /**
  * 回合抽牌（累加式）：side 行动回合开始，从牌堆抽 n 张加入手牌
- * （n 由 turnCount 决定：首回合 3 张，其后 1 张）。牌堆为空则跳过（抽完即止，不重洗）。
- * @returns 实际抽到的牌
+ * （n 缺省由 turnCount 决定：前两回合 0 张（起始手牌已开局双发），其后 1 张；
+ * createMatch 显式传 TURN_DEAL_BASE 发起始手牌）。牌堆为空则跳过（抽完即止，不重洗）。
+ * 手牌上限（HAND_LIMIT=3）：抽牌后超出上限的（即最新抽到的）牌直接撕毁——
+ * 不进手牌、不回牌堆（防跳过/拖时间囤牌）。
+ * @returns pieces = 实际留在手牌的新牌；shredded = 因超上限被撕毁的牌
  */
-function dealTo(state: MatchState, side: Side): { pieces: Piece[] } {
-  const n = dealCountFor(state.turnCount)
+function dealTo(state: MatchState, side: Side, n = dealCountFor(state.turnCount)): { pieces: Piece[]; shredded: Piece[] } {
   const pieces: Piece[] = []
   while (pieces.length < n && state.deck.length > 0) {
     pieces.push(state.deck.shift()!)
   }
   state.hands[side].push(...pieces)
-  return { pieces }
+  let shredded: Piece[] = []
+  // 仅在实际抽到牌时裁上限：没抽牌（牌堆空）不动手牌（撕的只能是"最新抽到的"）
+  if (pieces.length > 0 && state.hands[side].length > HAND_LIMIT) {
+    shredded = state.hands[side].splice(HAND_LIMIT)   // 撕掉最末尾 = 最新抽到的（必为新牌尾部）
+  }
+  // dealt 事件只报实际留在手牌的新牌（被撕的不重复计入）
+  const kept = shredded.length > 0 ? pieces.slice(0, pieces.length - shredded.length) : pieces
+  return { pieces: kept, shredded }
+}
+
+/** 换边抽牌事件化：kept 入 dealt、超额入 shredded（均为空则不产生事件） */
+function dealEvents(state: MatchState, side: Side): PlaceEvent[] {
+  const dealt = dealTo(state, side)
+  const events: PlaceEvent[] = []
+  if (dealt.pieces.length > 0) {
+    events.push({ type: 'dealt', side, pieces: dealt.pieces })
+  }
+  if (dealt.shredded.length > 0) {
+    events.push({ type: 'shredded', side, pieces: dealt.shredded })
+  }
+  return events
 }
 
 /** 格子当前归属（最上层棋子的阵营），空格返回 null */
@@ -219,14 +247,11 @@ export function place(
     return events
   }
 
-  // 5. 换边：进入对手回合并自动抽牌（对手无合法落子时可主动跳过）
+  // 5. 换边：进入对手回合并自动抽牌（对手无合法落子时可主动跳过；手牌满则新牌被撕）
   state.turnSide = opp
   state.turnCount++
   state.phase = 'TURN_ACTION'
-  const dealt = dealTo(state, opp)
-  if (dealt.pieces.length > 0) {
-    events.push({ type: 'dealt', side: opp, pieces: dealt.pieces })
-  }
+  events.push(...dealEvents(state, opp))
   return events
 }
 
@@ -259,15 +284,12 @@ export function skip(state: MatchState, side: Side): PlaceEvent[] {
     return events
   }
 
-  // 3. 正常跳过：记录跳过方，换边并给对手抽牌
+  // 3. 正常跳过：记录跳过方，换边并给对手抽牌（手牌满则新牌被撕——跳过无法囤牌）
   state.lastSkipped = side
   state.turnSide = opp
   state.turnCount++
   state.phase = 'TURN_ACTION'
-  const dealt = dealTo(state, opp)
-  if (dealt.pieces.length > 0) {
-    events.push({ type: 'dealt', side: opp, pieces: dealt.pieces })
-  }
+  events.push(...dealEvents(state, opp))
   return events
 }
 

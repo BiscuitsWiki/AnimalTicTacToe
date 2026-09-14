@@ -75,12 +75,13 @@ red.ws.close()
 await disco
 console.log('PASS: 对手收到 opponent:disconnected')
 
-// 红方"刷新"：新 socket 发 match:reconnect 探测
+// 红方"刷新"：新 socket 发 match:reconnect 探测（红蓝随机分配，按实际红方身份探测）
+const redPlayerId = sa.youAre === 'red' ? 'rc-a' : 'rc-b'
 const red2 = client('A2')
 await open(red2)
 const reconnected = red2.wait('match:reconnected')
 const reconAck = red2.wait('match:reconnect')
-red2.send('match:reconnect', { playerId: 'rc-a' })
+red2.send('match:reconnect', { playerId: redPlayerId })
 const rc = await reconnected
 const ack = await reconAck
 assert(ack.ok === true, 'match:reconnect 应答 ok=true（带信封）')

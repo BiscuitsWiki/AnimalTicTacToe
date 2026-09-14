@@ -1,6 +1,6 @@
 /**
  * 跳过与平局改版 WS 冒烟：
- * 局1：红跳过（换边抽牌 / lastSkipped 同步 / skipped 事件）→ 蓝跳过 → 双方连续跳过 both_skip 平局终局
+ * 局1：红跳过（换边不补牌 / lastSkipped 同步 / skipped 事件）→ 蓝跳过 → 双方连续跳过 both_skip 平局终局
  * 局2：红跳过 → 蓝落子（lastSkipped 重置、对局继续）→ 蓝非本回合跳过被忽略 → 红落子正常换边
  */
 import WebSocket from 'ws'
@@ -73,9 +73,9 @@ assert(r1.state.turnCount === 2 && r1.state.turnSide === 'blue', '局1: 红跳�
 assert(r1.state.lastSkipped === 'red', '局1: lastSkipped=red 随状态同步')
 assert(b1.state.lastSkipped === 'red', '局1: 对手视角 lastSkipped 同步')
 assert(r1.state.hands.red.length === 3, '局1: 跳过不消耗红方手牌（仍 3 张）')
-assert(b1.state.hands.blue.length === 3, '局1: 蓝方首回合正常发起始 3 张（摸牌正常）')
+assert(b1.state.hands.blue.length === 3, '局1: 蓝方保持开局起始 3 张（首个行动回合不补牌）')
 assert(r1.events.some(e => e.type === 'skipped' && e.side === 'red'), '局1: skipped 事件广播')
-assert(r1.events.some(e => e.type === 'dealt' && e.pieces.length === 3), '局1: 蓝方发牌事件（3 张）')
+assert(!r1.events.some(e => e.type === 'dealt' || e.type === 'shredded'), '局1: 首个行动回合换边无补牌/撕牌事件')
 
 m1.blue.send('game:skip', {})
 const r2 = await m1.red.wait('game:state')
