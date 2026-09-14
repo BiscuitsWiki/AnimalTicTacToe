@@ -17,7 +17,7 @@ function toPiece(p: ApiPiece): Piece {
   const element2 = p.element2 && (ELEMENTS as string[]).includes(p.element2)
     ? (p.element2 as Piece['element'])
     : undefined
-  return { id: p.id, name: p.name, element, element2 }
+  return { id: p.id, name: p.name, element, element2, ...(p.imageUrl ? { imageUrl: p.imageUrl } : {}) }
 }
 
 export interface DeckSource {

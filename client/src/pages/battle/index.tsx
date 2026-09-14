@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react'
-import { Button, View, Text } from '@tarojs/components'
+import { Button, Image, View, Text } from '@tarojs/components'
 import Taro, { useShareAppMessage, useUnload } from '@tarojs/taro'
 import {
   canPlace, cloneState, createMatch, legalCells, place, resign, sideNameZh, skip, topSide,
@@ -1104,6 +1104,9 @@ export default function Battle () {
               )}
               {top && (
                 <View className='piece' style={`border-color: ${ELEMENT_COLORS[top.piece.element]}`}>
+                  {top.piece.imageUrl && (
+                    <Image className='piece__img' src={top.piece.imageUrl} mode='aspectFill' />
+                  )}
                   <View className='piece__elements'>
                     <Text
                       className='piece__element'
@@ -1161,6 +1164,7 @@ export default function Battle () {
           {shredFx.pieces.map((p, i) => (
             <View className='shred-fx__card' key={`${p.id}-${i}`}>
               <View className='shred-fx__half shred-fx__half--top'>
+                {p.imageUrl && <Image className='shred-fx__img' src={p.imageUrl} mode='aspectFill' />}
                 <Text
                   className='shred-fx__el'
                   style={`background: ${ELEMENT_COLORS[p.element]}`}
@@ -1170,6 +1174,7 @@ export default function Battle () {
                 <Text className='shred-fx__name'>{p.name}</Text>
               </View>
               <View className='shred-fx__half shred-fx__half--bottom'>
+                {p.imageUrl && <Image className='shred-fx__img' src={p.imageUrl} mode='aspectFill' />}
                 <Text
                   className='shred-fx__el'
                   style={`background: ${ELEMENT_COLORS[p.element]}`}
@@ -1209,6 +1214,9 @@ export default function Battle () {
                 style={`border-color: ${ELEMENT_COLORS[piece.element]}`}
                 onClick={() => onSelectCard(idx)}
               >
+                {piece.imageUrl && (
+                  <Image className='card__img' src={piece.imageUrl} mode='aspectFill' />
+                )}
                 <View className='card__elements'>
                   <Text
                     className='card__element'

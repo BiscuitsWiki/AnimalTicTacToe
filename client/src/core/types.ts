@@ -25,6 +25,8 @@ export interface Piece {
   element: Element
   /** 副属性（可选）；与主属性相同时按单属性处理 */
   element2?: Element
+  /** 工坊上架卡展示图（可选，/uploads 相对路径）；预设卡无图走纯文字样式 */
+  imageUrl?: string
 }
 
 /** 格子上的叠放层（自底向上，最后一项为最上层） */

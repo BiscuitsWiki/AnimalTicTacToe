@@ -571,6 +571,7 @@ export class MatchService {
       name: p.name,
       element: p.element as Element,
       ...(p.element2 ? { element2: p.element2 as Element } : {}),
+      ...(p.imageUrl ? { imageUrl: p.imageUrl } : {}),
     }))
     return shuffle([...PRESET_DECK, ...workshop]) as Piece[]
   }

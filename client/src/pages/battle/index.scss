@@ -508,6 +508,7 @@
 }
 
 .piece {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -517,6 +518,25 @@
   border: 3px solid transparent;
   background: #fff;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+
+  /* 工坊上架卡展示图：铺满棋面，属性/名称浮层在上 */
+  &__img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  &__elements,
+  &__name {
+    position: relative;
+    z-index: 1;
+  }
+
+  &__name {
+    text-shadow: 0 0 3px #fff, 0 1px 2px rgba(255, 255, 255, 0.9), 0 -1px 2px rgba(255, 255, 255, 0.9);
+  }
 
   &__elements {
     display: flex;
@@ -625,6 +645,7 @@
 }
 
 .card {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -637,6 +658,7 @@
   border: 3px solid transparent;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   transition: transform 0.15s, box-shadow 0.15s;
+  overflow: hidden;
 
   &--selected {
     transform: translateY(-8px);
@@ -646,6 +668,20 @@
 
   &--disabled {
     opacity: 0.55;
+  }
+
+  /* 工坊上架卡展示图：铺满卡面，属性/名称浮层在上 */
+  &__img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  &__elements,
+  &__name {
+    position: relative;
+    z-index: 1;
   }
 
   &__elements {
@@ -664,6 +700,7 @@
     font-size: 24px;
     font-weight: bold;
     color: #3a3a3a;
+    text-shadow: 0 0 3px #fff, 0 1px 2px rgba(255, 255, 255, 0.9), 0 -1px 2px rgba(255, 255, 255, 0.9);
   }
 }
 
@@ -778,6 +815,7 @@
     background: #fff;
     border: 3px solid #b8a98f;
     border-radius: 14px;
+    overflow: hidden;
 
     &--top {
       clip-path: inset(0 0 50% 0);
@@ -790,7 +828,17 @@
     }
   }
 
+  /* 工坊上架卡展示图：铺满被撕卡面（随 clip-path 一起被裁） */
+  &__img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
   &__el {
+    position: relative;
+    z-index: 1;
     font-size: 20px;
     color: #fff;
     padding: 2px 12px;
@@ -798,9 +846,12 @@
   }
 
   &__name {
+    position: relative;
+    z-index: 1;
     font-size: 26px;
     color: #3a3a3a;
     font-weight: bold;
+    text-shadow: 0 0 3px #fff, 0 1px 2px rgba(255, 255, 255, 0.9), 0 -1px 2px rgba(255, 255, 255, 0.9);
   }
 
   &__label {

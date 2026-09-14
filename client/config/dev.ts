@@ -11,7 +11,14 @@ export default {
       // 绑定 0.0.0.0：局域网设备（手机/其他电脑）可通过 http://<电脑IP>:10086 访问
       host: '0.0.0.0',
       // 允许来自局域网 IP 的页面访问 dev server
-      allowedHosts: 'all'
+      allowedHosts: 'all',
+      // 对局内上架卡展示图走后端 /uploads（生产由 nginx 反代，本地开发同理）
+      proxy: {
+        '/uploads': {
+          target: 'http://localhost:3000',
+          changeOrigin: true
+        }
+      }
     }
   }
 } satisfies UserConfigExport<'webpack5'>
