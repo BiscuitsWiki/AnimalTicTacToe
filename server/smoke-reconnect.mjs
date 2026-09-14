@@ -166,6 +166,14 @@ const hRc = await h2Re
 assert(hRc.youAre === 'red', '房主刷新恢复：身份=红方')
 await h2.wait('game:state')
 
+// 终局清场：认输立即结束对局（双方 close 有 60s 断线宽限，对局残留期间 rc-* 仍在 match，
+// 连跑第二次会撞 in_match；房间若不显式退出也会因暂离机制保留 3 分钟撞 already_in_room）
+const endedEvt = g2.wait('match:ended')
+g2.send('game:resign', {})
+await endedEvt
+g2.send('room:leave', { playerId: 'rc-guest' })
+h2.send('room:leave', { playerId: 'rc-host' })
+await new Promise(r => setTimeout(r, 300))
 h2.ws.close()
 g2.ws.close()
 h.ws.close()

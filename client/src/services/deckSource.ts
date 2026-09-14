@@ -1,10 +1,11 @@
 /**
- * 对局牌堆数据源：优先公共池 API，失败/为空时回退本地预设卡。
+ * 对局牌堆数据源：预设 51 张 + 工坊上架卡全部混合（与服务端 buildDeck 语义一致）。
  * 回合发牌制：初始手牌由引擎在回合开始时自动发，这里只提供牌堆。
  */
 import type { Piece } from '../core/types'
 import { ELEMENTS } from '../core/elements'
 import { PRESET_DECK, freshDeck } from '../core/pieces'
+import { shuffle } from '../core/engine'
 import { fetchApprovedPieces } from '../services/api'
 import type { ApiPiece } from '../services/api'
 
@@ -23,15 +24,12 @@ export interface DeckSource {
   deck: Piece[]
 }
 
-/** 从公共池生成对局牌堆（36 张互不相同）；池子不足 36 时用预设卡补齐 */
+/** 生成对局牌堆：预设 51 张 + 工坊上架卡全部混合；后端不可达时整副预设 */
 export async function buildDeckFromServer(): Promise<DeckSource> {
   try {
     const remote = await fetchApprovedPieces()
-    const pool = remote.map(toPiece)
-    if (pool.length >= 36) {
-      const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, 36)
-      return { deck: shuffled }
-    }
+    const workshop = remote.map(toPiece)
+    return { deck: shuffle([...PRESET_DECK, ...workshop]) }
   } catch {
     // 后端未启动 / 网络失败 → 回退本地
   }

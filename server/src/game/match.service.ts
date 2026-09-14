@@ -9,9 +9,8 @@ import { PieceService } from '../piece/piece.service.js'
 import {
   createMatch, opponent, place, resign, shuffle, skip,
 } from './core/engine.js'
-import { freshDeck } from './core/pieces.js'
+import { PRESET_DECK } from './core/pieces.js'
 import type { MatchResult, MatchState, PlaceEvent, Piece, Side } from './core/types.js'
-import { DECK_SIZE } from './core/types.js'
 import type { Element } from './core/elements.js'
 
 /** 服务端向某客户端推送的套接字抽象 */
@@ -175,7 +174,7 @@ export class MatchService {
     const roomId = `m${++matchSeq}`
     const room: GameRoom = {
       matchId: roomId,
-      state: createMatch({ deck: deck.slice(0, DECK_SIZE) }),
+      state: createMatch({ deck }),   // buildDeck：预设 51 + 上架卡全部混合，不再截断
       players: [
         { playerId: red.playerId, name: red.name, side: 'red', socket: red.socket },
         { playerId: blue.playerId, name: blue.name, side: 'blue', socket: blue.socket },
@@ -564,19 +563,16 @@ export class MatchService {
     this.push(player.socket, 'game:state', view)
   }
 
-  /** 组牌：与客户端 deckSource 语义一致——工坊审核池 ≥36 张时随机取 36 张；不足时整副回退预设牌（51 张 = 36 单属性 + 15 双属性，属性齐全），绝不出现占位卡 */
+  /** 组牌：预设 51 张（36 单属性 + 15 双属性）+ 工坊上架卡全部混合洗牌入局；上架卡为空即整副预设 */
   private async buildDeck() {
     const approved = await this.pieceService.listApproved(500)
-    const pieces = approved.map(p => ({
+    const workshop = approved.map(p => ({
       id: p.id,
       name: p.name,
       element: p.element as Element,
       ...(p.element2 ? { element2: p.element2 as Element } : {}),
     }))
-    if (pieces.length >= DECK_SIZE) {
-      return shuffle(pieces).slice(0, DECK_SIZE) as Piece[]
-    }
-    return freshDeck()
+    return shuffle([...PRESET_DECK, ...workshop]) as Piece[]
   }
 
   private push(socket: ClientSocket | null, event: string, data: unknown): void {

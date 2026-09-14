@@ -33,8 +33,8 @@ class FakeSocket {
   }
 }
 
-function makeService() {
-  const pieceService = { listApproved: async () => [] as unknown[] }
+function makeService(approved: unknown[] = []) {
+  const pieceService = { listApproved: async () => approved }
   const prisma = {
     match: { create: async () => ({ id: 'db-match-1' }) },
     matchAction: { createMany: async () => ({ count: 0 }) },
@@ -53,6 +53,52 @@ async function startGame() {
   )
   return { service, red, blue }
 }
+
+describe('MatchService 牌堆构建', () => {
+  it('无上架卡：整副预设 51 张入局', async () => {
+    const service = makeService()
+    const red = new FakeSocket()
+    const blue = new FakeSocket()
+    await service.startDirectMatch(
+      { playerId: 'r', name: '红方', socket: red },
+      { playerId: 'b', name: '蓝方', socket: blue },
+    )
+    const view = red.views()[0]
+    // 51 张 - 双方起始手牌 6 张 = 45
+    expect(view.state.deck.length).toBe(45)
+  })
+
+  it('预设 + 上架卡全部混合：51 + N 张入局（不截断、不互斥）', async () => {
+    const approved = Array.from({ length: 3 }, (_, i) => ({ id: `w${i}`, name: `上架卡${i}`, element: 'fire' }))
+    const service = makeService(approved)
+    const red = new FakeSocket()
+    const blue = new FakeSocket()
+    await service.startDirectMatch(
+      { playerId: 'r', name: '红方', socket: red },
+      { playerId: 'b', name: '蓝方', socket: blue },
+    )
+    const view = red.views()[0]
+    // 51 + 3 - 双方起始手牌 6 张 = 48
+    expect(view.state.deck.length).toBe(48)
+    // 本方手牌明文：每张来自预设池或上架卡（混合无占位混入）
+    expect(view.state.hands.red.every((p: { id: string }) =>
+      /^d\d{2}$/.test(p.id) || ['w0', 'w1', 'w2'].includes(p.id),
+    )).toBe(true)
+  })
+
+  it('上架卡超过预设量级（40 张）：91 张全部入局', async () => {
+    const approved = Array.from({ length: 40 }, (_, i) => ({ id: `a${i}`, name: `卡${i}`, element: 'fire' }))
+    const service = makeService(approved)
+    const red = new FakeSocket()
+    const blue = new FakeSocket()
+    await service.startDirectMatch(
+      { playerId: 'r', name: '红方', socket: red },
+      { playerId: 'b', name: '蓝方', socket: blue },
+    )
+    const view = red.views()[0]
+    expect(view.state.deck.length).toBe(85)   // 51 + 40 - 6
+  })
+})
 
 describe('MatchService 回合倒计时', () => {
   beforeEach(() => {
