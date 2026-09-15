@@ -3,7 +3,7 @@ import { View, Text, Input, Image, Picker } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import { ELEMENTS, ELEMENT_COLORS, ELEMENT_NAMES_ZH } from '../../core/elements'
 import type { Element } from '../../core/elements'
-import { API_BASE, getJSON, postJSON, uploadImage } from '../../services/api'
+import { API_BASE, REPORT_REASONS, fetchApprovedPieces, getJSON, postJSON, reportPiece, uploadImage, withdrawPiece } from '../../services/api'
 import { ensureLogin } from '../../services/auth'
 import './index.scss'
 
@@ -33,6 +33,8 @@ export default function Workshop () {
   const [uploading, setUploading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [mine, setMine] = useState<MyPiece[]>([])
+  const [approved, setApproved] = useState<MyPiece[]>([])
+  const [reportTarget, setReportTarget] = useState<MyPiece | null>(null)
   const [serverDown, setServerDown] = useState(false)
 
   const loadMine = async () => {
@@ -44,16 +46,35 @@ export default function Workshop () {
     }
   }
 
+  const loadApproved = async () => {
+    try {
+      const list = await fetchApprovedPieces()
+      // 保底兜底转换（服务端返回字段与 MyPiece 一致）
+      setApproved(list as unknown as MyPiece[])
+    } catch {
+      // 网络异常时已在 serverDown 提示，静默
+    }
+  }
+
   useEffect(() => {
     void (async () => {
       await ensureLogin()
-      await loadMine()
+      await Promise.all([loadMine(), loadApproved()])
     })()
   }, [])
 
   const chooseImage = async () => {
-    const res = await Taro.chooseImage({ count: 1, sizeType: ['compressed'] })
-    const path = res.tempFilePaths[0]
+    // 备份当前图片：取消选择/上传失败时恢复，避免原图被清空
+    const prevPath = imagePath
+    const prevUrl = imageUrl
+    let res: Taro.chooseImage.SuccessCallbackResult | null = null
+    try {
+      res = await Taro.chooseImage({ count: 1, sizeType: ['compressed'] })
+    } catch {
+      return // 用户取消选择，保持原图
+    }
+    const path = res?.tempFilePaths?.[0]
+    if (!path) return // 空结果（取消），保持原图
     setImagePath(path)
     setUploading(true)
     try {
@@ -62,8 +83,8 @@ export default function Workshop () {
       Taro.showToast({ title: '图片已上传', icon: 'success' })
     } catch (e) {
       Taro.showToast({ title: (e as Error).message || '上传失败，请重试', icon: 'none' })
-      setImagePath('')
-      setImageUrl('')
+      setImagePath(prevPath)
+      setImageUrl(prevUrl)
     } finally {
       setUploading(false)
     }
@@ -86,6 +107,41 @@ export default function Workshop () {
       Taro.showToast({ title: (e as Error).message || '提交失败', icon: 'none' })
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  /** 撤回待审核提交 */
+  const withdraw = async (id: string) => {
+    const { confirm } = await Taro.showModal({
+      title: '撤回提交',
+      content: '确定撤回该棋子的审核申请吗？撤回后需重新提交。',
+    })
+    if (!confirm) return
+    try {
+      await withdrawPiece(id)
+      Taro.showToast({ title: '已撤回', icon: 'success' })
+      await loadMine()
+    } catch (e) {
+      Taro.showToast({ title: (e as Error).message || '撤回失败', icon: 'none' })
+    }
+  }
+
+  /** 提交举报 */
+  const doReport = async (reason: string) => {
+    if (!reportTarget) return
+    try {
+      const res = await reportPiece(reportTarget.id, reason)
+      Taro.showToast({
+        title: res.duplicated
+          ? '您已举报过该棋子'
+          : res.takedown
+            ? '已举报，该棋子将被下架重审'
+            : '举报成功，感谢反馈',
+        icon: 'none',
+      })
+      setReportTarget(null)
+    } catch (e) {
+      Taro.showToast({ title: (e as Error).message || '举报失败', icon: 'none' })
     }
   }
 
@@ -219,9 +275,16 @@ export default function Workshop () {
                     </Text>
                   )}
                 </View>
-                <Text className={`mine-item__status mine-item__status--${p.status}`}>
-                  {STATUS_TEXT[p.status]}
-                </Text>
+                <View className='mine-item__row'>
+                  <Text className={`mine-item__status mine-item__status--${p.status}`}>
+                    {STATUS_TEXT[p.status]}
+                  </Text>
+                  {p.status === 'pending' && (
+                    <View className='mine-item__btn' onClick={() => withdraw(p.id)}>
+                      <Text>撤回</Text>
+                    </View>
+                  )}
+                </View>
                 {p.status === 'rejected' && p.rejectReason && (
                   <Text className='mine-item__reason'>驳回原因：{p.rejectReason}</Text>
                 )}
@@ -230,6 +293,65 @@ export default function Workshop () {
           ))}
         </View>
       </View>
+
+      {/* 已上架卡牌（全服公共池，可直接查看/举报） */}
+      <View className='panel'>
+        <Text className='panel__title'>已上架卡牌（{approved.length}）</Text>
+        {approved.length === 0 && <Text className='panel__empty'>暂无已上架卡牌</Text>}
+        <View className='mine-list'>
+          {approved.map(p => (
+            <View key={p.id} className='mine-item mine-item--public'>
+              <Image
+                className='mine-item__img'
+                src={`${API_BASE}${p.imageUrl}`}
+                mode='aspectFill'
+              />
+              <View className='mine-item__info'>
+                <Text className='mine-item__name'>{p.name}</Text>
+                <View className='mine-item__elements'>
+                  <Text
+                    className='mine-item__element'
+                    style={`background: ${ELEMENT_COLORS[p.element as Element] ?? '#999'}`}
+                  >
+                    {(ELEMENT_NAMES_ZH as Record<string, string>)[p.element] ?? p.element}
+                  </Text>
+                  {p.element2 && (
+                    <Text
+                      className='mine-item__element'
+                      style={`background: ${ELEMENT_COLORS[p.element2 as Element] ?? '#999'}`}
+                    >
+                      {(ELEMENT_NAMES_ZH as Record<string, string>)[p.element2] ?? p.element2}
+                    </Text>
+                  )}
+                </View>
+              </View>
+              <View className='mine-item__report' onClick={() => setReportTarget(p)}>
+                <Text>举报</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {/* 举报弹窗 */}
+      {reportTarget && (
+        <View className='mask' onClick={() => setReportTarget(null)}>
+          <View className='mask__panel' onClick={e => e.stopPropagation()}>
+            <Text className='mask__title'>举报「{reportTarget.name}」</Text>
+            <Text className='mask__desc'>该棋子将进入人工复核，请选择举报理由</Text>
+            <View className='report__grid'>
+              {REPORT_REASONS.map(r => (
+                <View key={r.value} className='report__item' onClick={() => doReport(r.value)}>
+                  <Text>{r.label}</Text>
+                </View>
+              ))}
+            </View>
+            <View className='report__cancel' onClick={() => setReportTarget(null)}>
+              <Text>取消</Text>
+            </View>
+          </View>
+        </View>
+      )}
     </View>
   )
 }

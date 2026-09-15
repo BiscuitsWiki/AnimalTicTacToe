@@ -146,6 +146,17 @@ export class PieceController {
     })
   }
 
+  /** 撤回待审核提交（登录态下作者为当前用户，仅 pending 状态） */
+  @Post(':id/withdraw')
+  async withdraw(
+    @Param('id') id: string,
+    @Headers() headers: Record<string, string>,
+    @Body() body: { authorId?: string },
+  ) {
+    const user = await this.auth.verifyTokenOrNull(this.bearer(headers))
+    return this.pieceService.withdraw(id, user?.id ?? body?.authorId ?? 'guest')
+  }
+
   /** 审核操作（管理端） */
   @Post(':id/review')
   review(

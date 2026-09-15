@@ -183,6 +183,11 @@
   padding: 20px;
   border-radius: 16px;
   background: #f9f6f0;
+  position: relative;
+
+  &--public {
+    padding-right: 110px; // 给右上角举报按钮留位
+  }
 
   &__img {
     width: 120px;
@@ -216,6 +221,12 @@
     border-radius: 999px;
   }
 
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
   &__status {
     font-size: 22px;
 
@@ -224,8 +235,105 @@
     &--rejected { color: #d05048; }
   }
 
+  &__btn {
+    padding: 4px 20px;
+    border-radius: 999px;
+    background: #fdeaea;
+    color: #d05048;
+    font-size: 22px;
+
+    &:active {
+      opacity: 0.8;
+    }
+  }
+
+  &__report {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    padding: 6px 24px;
+    border-radius: 999px;
+    background: #fdeaea;
+    color: #d05048;
+    font-size: 24px;
+
+    &:active {
+      opacity: 0.8;
+    }
+  }
+
   &__reason {
     font-size: 20px;
     color: #b0a89a;
+  }
+}
+
+/* 举报弹窗 */
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+
+  &__panel {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    width: 600px;
+    padding: 40px;
+    border-radius: 24px;
+    background: #fffdf9;
+  }
+
+  &__title {
+    font-size: 32px;
+    font-weight: bold;
+    color: #3a3a3a;
+  }
+
+  &__desc {
+    font-size: 24px;
+    color: #a39a89;
+  }
+}
+
+.report {
+  &__grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  &__item {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px 28px;
+    border-radius: 12px;
+    background: #f4f0e8;
+    font-size: 26px;
+    color: #4a4a4a;
+
+    &:active {
+      opacity: 0.8;
+    }
+  }
+
+  &__cancel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 72px;
+    border-radius: 16px;
+    background: #e9e4da;
+    color: #6b6357;
+    font-size: 28px;
+
+    &:active {
+      opacity: 0.8;
+    }
   }
 }

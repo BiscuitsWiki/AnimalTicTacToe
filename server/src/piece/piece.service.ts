@@ -1,4 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { unlink } from 'node:fs/promises'
+import { join } from 'node:path'
 import { PrismaService } from '../prisma.service.js'
 import { ContentSecurityService } from './content-security.service.js'
 import { ELEMENTS } from '../game/core/elements.js'
@@ -102,6 +104,23 @@ export class PieceService {
       where: { status: 'pending' },
       orderBy: { createdAt: 'asc' },
     })
+  }
+
+  /** 撤回待审核提交（仅作者本人；pending 状态可撤回，撤回即删除记录） */
+  async withdraw(id: string, authorId: string) {
+    const piece = await this.prisma.piece.findUnique({ where: { id } })
+    if (!piece) throw new NotFoundException('棋子不存在')
+    if (!authorId || piece.authorId !== authorId) {
+      throw new BadRequestException('只能撤回自己提交的棋子')
+    }
+    if (piece.status !== 'pending') {
+      throw new BadRequestException('仅待审核的棋子可撤回')
+    }
+    await this.prisma.piece.delete({ where: { id } })
+    // 尽力清理已上传的图片文件（资源隔离，失败静默）
+    const m = /^\/uploads\/([^/]+)$/.exec(piece.imageUrl)
+    if (m) await unlink(join(process.cwd(), 'uploads', m[1])).catch(() => {})
+    return { ok: true }
   }
 
   /** 审核操作（管理端）：通过 / 驳回；reported 状态的棋子也可审核（举报链路裁决） */

@@ -206,6 +206,11 @@ export const REPORT_REASONS: { value: string; label: string }[] = [
   { value: 'other', label: '其他' },
 ]
 
+/** 撤回待审核棋子（仅作者本人，pending 状态） */
+export async function withdrawPiece(pieceId: string): Promise<{ ok: boolean }> {
+  return postJSON(`/pieces/${encodeURIComponent(pieceId)}/withdraw`, {})
+}
+
 /** 对局内举报棋子（P3：登录态下举报者自动归属当前用户） */
 export async function reportPiece(pieceId: string, reason: string, matchId?: string): Promise<{
   ok: boolean
