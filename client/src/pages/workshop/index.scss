@@ -233,6 +233,8 @@
     &--pending { color: #d98a2b; }
     &--approved { color: #5cb85c; }
     &--rejected { color: #d05048; }
+    &--reported { color: #c0392b; }
+    &--recycled { color: #8a8175; }
   }
 
   &__btn {

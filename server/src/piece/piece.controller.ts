@@ -114,6 +114,13 @@ export class PieceController {
     return this.pieceService.listMine(user?.id ?? authorId ?? 'guest')
   }
 
+  /** 上架中队列（管理端，全字段供后台展示/下架） */
+  @Get('approved-full')
+  listApprovedFull(@Headers() headers: Record<string, string>) {
+    this.assertAdmin(headers)
+    return this.pieceService.listApprovedFull()
+  }
+
   /** 待审核队列（管理端，普通审核链路） */
   @Get('pending')
   listPending(@Headers() headers: Record<string, string>) {
@@ -126,6 +133,20 @@ export class PieceController {
   listReported(@Headers() headers: Record<string, string>) {
     this.assertAdmin(headers)
     return this.pieceService.listReported()
+  }
+
+  /** 已驳回队列（管理端） */
+  @Get('rejected')
+  listRejected(@Headers() headers: Record<string, string>) {
+    this.assertAdmin(headers)
+    return this.pieceService.listRejected()
+  }
+
+  /** 回收区队列（管理端：手动下架，30 天未恢复则销毁） */
+  @Get('recycled')
+  listRecycled(@Headers() headers: Record<string, string>) {
+    this.assertAdmin(headers)
+    return this.pieceService.listRecycled()
   }
 
   /** 对局内举报棋子（登录态下举报者归属当前用户） */
@@ -157,17 +178,17 @@ export class PieceController {
     return this.pieceService.withdraw(id, user?.id ?? body?.authorId ?? 'guest')
   }
 
-  /** 审核操作（管理端） */
+  /** 审核操作（管理端）：approve 通过 / reject 驳回 / takedown 下架进回收区 / restore 回收区恢复上架 */
   @Post(':id/review')
   review(
     @Param('id') id: string,
     @Headers() headers: Record<string, string>,
-    @Query('action') action: 'approve' | 'reject',
+    @Query('action') action: 'approve' | 'reject' | 'takedown' | 'restore',
     @Query('reason') reason?: string,
   ) {
     this.assertAdmin(headers)
-    if (action !== 'approve' && action !== 'reject') {
-      throw new BadRequestException('action 仅支持 approve / reject')
+    if (action !== 'approve' && action !== 'reject' && action !== 'takedown' && action !== 'restore') {
+      throw new BadRequestException('action 仅支持 approve / reject / takedown / restore')
     }
     return this.pieceService.review(id, action, reason)
   }

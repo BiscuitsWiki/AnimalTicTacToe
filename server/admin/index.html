@@ -48,46 +48,40 @@
 
   main { max-width: 1100px; margin: 0 auto; padding: 24px 32px 64px; }
 
+  /* 信息块（即导航，点击切换子页面） */
   .stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 12px;
-    margin-bottom: 24px;
+    margin-bottom: 20px;
   }
   .stat-card {
     background: #fffdf9;
     border-radius: 12px;
     padding: 16px;
     text-align: center;
-    border: 1px solid #eee6d8;
+    border: 2px solid #eee6d8;
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+  }
+  .stat-card:hover { border-color: #d8cbb4; transform: translateY(-2px); }
+  .stat-card.active {
+    border-color: #e0654a;
+    box-shadow: 0 3px 10px rgba(224, 101, 74, 0.18);
   }
   .stat-card .num { font-size: 28px; font-weight: bold; }
   .stat-card .num.alert { color: #e0654a; }
   .stat-card .label { font-size: 12px; color: #8a8175; margin-top: 4px; }
 
-  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-  .tab {
-    padding: 10px 24px;
-    border-radius: 24px;
-    background: #fffdf9;
-    border: 1px solid #e8e0d2;
-    cursor: pointer;
-    font-size: 15px;
-    user-select: none;
+  .page-title {
+    font-size: 16px;
+    font-weight: bold;
+    margin-bottom: 14px;
+    color: #5a5248;
+    border-left: 4px solid #e0654a;
+    padding-left: 10px;
   }
-  .tab.active { background: #e0654a; color: #fff; border-color: #e0654a; }
-  .tab .badge {
-    display: inline-block;
-    min-width: 20px;
-    padding: 0 6px;
-    margin-left: 6px;
-    border-radius: 10px;
-    background: #e0654a;
-    color: #fff;
-    font-size: 12px;
-    line-height: 18px;
-  }
-  .tab.active .badge { background: #fff; color: #e0654a; }
 
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
   .card {
@@ -111,6 +105,8 @@
   .card-info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
   .card-info .name { font-size: 18px; font-weight: bold; }
   .card-info .meta { font-size: 13px; color: #8a8175; }
+  .card-info .meta.danger { color: #c0392b; }
+  .card-info .meta.urgent { color: #e0654a; font-weight: bold; }
   .tag {
     display: inline-block;
     padding: 2px 10px;
@@ -161,6 +157,48 @@
   .toast.show { opacity: 0.95; }
   .locked { opacity: 0.4; pointer-events: none; }
   #login-tip { text-align: center; padding: 96px 0; color: #8a8175; font-size: 15px; }
+
+  /* 确认弹窗 */
+  .modal-mask {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
+  }
+  .modal {
+    background: #fffdf9;
+    border-radius: 16px;
+    padding: 24px;
+    width: min(420px, 90vw);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.2);
+  }
+  .modal-title { font-size: 17px; font-weight: bold; margin-bottom: 14px; }
+  .modal-body { font-size: 14px; color: #5a5248; line-height: 1.7; }
+  .modal-body b { color: #e0654a; }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+
+  /* 表格子页（对局 / 举报） */
+  .table-wrap {
+    background: #fffdf9;
+    border-radius: 16px;
+    border: 1px solid #eee6d8;
+    overflow-x: auto;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #f0e9dc; white-space: nowrap; }
+  th { background: #faf6ef; color: #8a8175; font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 8px;
+    font-size: 12px;
+    background: #f0e9dc;
+    color: #7a7266;
+  }
 </style>
 </head>
 <body>
@@ -177,14 +215,23 @@
   <div id="login-tip">请输入管理员 Token 连接后台</div>
   <div id="dashboard" style="display:none">
     <div class="stats" id="stats"></div>
-    <div class="tabs">
-      <div class="tab active" data-tab="pending">待审核<span class="badge" id="badge-pending">0</span></div>
-      <div class="tab" data-tab="reported">被举报<span class="badge" id="badge-reported">0</span></div>
-    </div>
+    <div class="page-title" id="page-title"></div>
     <div class="cards" id="cards"></div>
     <div class="empty" id="empty" style="display:none">队列为空，喝杯茶吧 ☕</div>
   </div>
 </main>
+
+<!-- 确认弹窗 -->
+<div class="modal-mask" id="modal-mask">
+  <div class="modal">
+    <div class="modal-title" id="modal-title"></div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-actions">
+      <button class="secondary" id="modal-cancel">取消</button>
+      <button class="danger" id="modal-ok">确认</button>
+    </div>
+  </div>
+</div>
 
 <div class="toast" id="toast"></div>
 
@@ -193,7 +240,8 @@
 
 const $ = s => document.querySelector(s)
 const TOKEN_KEY = 'attt_admin_token'
-let currentTab = 'pending'
+let currentPage = 'pending'
+let modalOnOk = null
 
 const REASON_ZH = {
   porn: '色情低俗', violence: '暴力血腥', politics: '政治敏感',
@@ -209,6 +257,21 @@ const ELEMENT_COLOR = {
   fighting: '#b5543b', poison: '#8e44ad', ground: '#a9743b', flying: '#7f9bd9', psychic: '#d64d7c',
   bug: '#8ba024', rock: '#8d7b5e', ghost: '#5f4d78', dragon: '#3b5db0', dark: '#4a3b45',
   steel: '#7a8f9c', fairy: '#d97fa2', normal: '#8a8175',
+}
+const MATCH_REASON_ZH = {
+  line: '三连', board_full: '棋盘填满', both_skip: '双方跳过',
+  resign: '认输', opponent_disconnect: '对手超时',
+}
+
+/** 子页面定义：信息块点击后切换到这里 */
+const PAGES = {
+  pending:  { label: '待审核', endpoint: '/pieces/pending' },
+  reported: { label: '被举报', endpoint: '/pieces/reported' },
+  approved: { label: '上架中', endpoint: '/pieces/approved-full' },
+  recycled: { label: '回收区', endpoint: '/pieces/recycled' },
+  rejected: { label: '已驳回', endpoint: '/pieces/rejected' },
+  matches:  { label: '对局记录', endpoint: '/admin/matches' },
+  reports:  { label: '举报明细', endpoint: '/admin/reports' },
 }
 
 function getToken() { return localStorage.getItem(TOKEN_KEY) || '' }
@@ -227,6 +290,10 @@ function fmtTime(iso) {
   const d = new Date(iso)
   return `${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
+function fmtDate(iso) {
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -238,35 +305,102 @@ async function api(path, options = {}) {
   return data
 }
 
-// ---------- 渲染 ----------
+// ---------- 确认弹窗 ----------
+
+function openModal(title, bodyHtml, okText, onOk) {
+  $('#modal-title').textContent = title
+  $('#modal-body').innerHTML = bodyHtml
+  $('#modal-ok').textContent = okText || '确认'
+  modalOnOk = onOk
+  $('#modal-mask').style.display = 'flex'
+}
+function closeModal() {
+  $('#modal-mask').style.display = 'none'
+  modalOnOk = null
+}
+$('#modal-ok').addEventListener('click', () => {
+  const fn = modalOnOk
+  closeModal()
+  if (fn) fn()
+})
+$('#modal-cancel').addEventListener('click', closeModal)
+$('#modal-mask').addEventListener('click', e => {
+  if (e.target.id === 'modal-mask') closeModal()
+})
+
+// ---------- 概览信息块（即导航） ----------
 
 function renderStats(s) {
-  const items = [
-    { num: s.pieces.pending, label: '待审核', alert: s.pieces.pending > 0 },
-    { num: s.pieces.reported, label: '被举报下架', alert: s.pieces.reported > 0 },
-    { num: s.pieces.approved, label: '上架中' },
-    { num: s.pieces.rejected, label: '已驳回' },
-    { num: s.matches.today, label: '今日对局' },
-    { num: s.matches.total, label: '累计对局' },
-    { num: s.reports.today, label: '今日举报' },
+  const cards = [
+    { page: 'pending', num: s.pieces.pending, label: '待审核', alert: s.pieces.pending > 0 },
+    { page: 'reported', num: s.pieces.reported, label: '被举报', alert: s.pieces.reported > 0 },
+    { page: 'approved', num: s.pieces.approved, label: '上架中' },
+    { page: 'recycled', num: s.pieces.recycled, label: '回收区', alert: s.pieces.recycled > 0 },
+    { page: 'rejected', num: s.pieces.rejected, label: '已驳回' },
+    { page: 'matches', num: s.matches.today, label: '今日对局' },
+    { page: 'matches', num: s.matches.total, label: '累计对局' },
+    { page: 'reports', num: s.reports.today, label: '今日举报' },
   ]
-  $('#stats').innerHTML = items.map(i =>
-    `<div class="stat-card">
-       <div class="num ${i.alert ? 'alert' : ''}">${i.num}</div>
-       <div class="label">${i.label}</div>
+  $('#stats').innerHTML = cards.map(c =>
+    `<div class="stat-card ${c.page === currentPage ? 'active' : ''}" data-page="${c.page}"
+          onclick="switchPage('${c.page}')">
+       <div class="num ${c.alert ? 'alert' : ''}">${c.num}</div>
+       <div class="label">${c.label}</div>
      </div>`).join('')
-  $('#badge-pending').textContent = s.pieces.pending
-  $('#badge-reported').textContent = s.pieces.reported
 }
 
-function renderCard(p) {
-  const color = ELEMENT_COLOR[p.element] || '#8a8175'
+function switchPage(page) {
+  if (!PAGES[page]) return
+  currentPage = page
+  loadDashboard().catch(e => toast(`加载失败：${e.message}`))
+}
+
+// ---------- 棋子卡片渲染 ----------
+
+function elementTags(p) {
+  const t1 = `<span class="tag" style="background:${ELEMENT_COLOR[p.element] || '#8a8175'}">${esc(ELEMENT_ZH[p.element] || p.element)}</span>`
+  const t2 = p.element2
+    ? `<span class="tag" style="background:${ELEMENT_COLOR[p.element2] || '#8a8175'}">${esc(ELEMENT_ZH[p.element2] || p.element2)}</span>`
+    : ''
+  return t1 + t2
+}
+
+function renderPieceCard(p, mode) {
   const reportsHtml = p.reports?.length ? `
     <div class="reports-box">
       ${p.reports.map(r =>
         `<div class="r-line">🚩 ${esc(REASON_ZH[r.reason] || r.reason)} · ${fmtTime(r.createdAt)}${r.matchId ? ` · 对局 ${esc(r.matchId)}` : ''}</div>`
       ).join('')}
     </div>` : ''
+
+  let extraMeta = ''
+  if (mode === 'recycled') {
+    const remain = p.recycledRemainDays ?? 30
+    extraMeta = `
+      <div class="meta">下架：${fmtDate(p.recycledAt)}</div>
+      <div class="meta ${remain === 0 ? 'urgent' : ''}">${remain === 0 ? '已超 30 天，将自动销毁' : `${remain} 天后自动销毁`}</div>`
+  } else if (p.rejectReason) {
+    extraMeta = `<div class="meta danger">原因：${esc(p.rejectReason)}</div>`
+  }
+
+  let actions = ''
+  if (mode === 'pending' || mode === 'reported') {
+    actions = `
+      <input class="reject-reason" placeholder="驳回原因（必填）">
+      <div class="card-actions">
+        <button class="secondary" onclick="review('${esc(p.id)}','reject')">驳回</button>
+        <button onclick="review('${esc(p.id)}','approve')">通过上架</button>
+      </div>`
+  } else if (mode === 'approved') {
+    actions = `<div class="card-actions">
+      <button class="danger" onclick="takedown('${esc(p.id)}','${esc(p.name)}')">下架</button>
+    </div>`
+  } else if (mode === 'recycled') {
+    actions = `<div class="card-actions">
+      <button onclick="review('${esc(p.id)}','restore')">恢复上架</button>
+    </div>`
+  }
+
   return `
   <div class="card" data-id="${esc(p.id)}">
     <div class="card-top">
@@ -274,25 +408,61 @@ function renderCard(p) {
            onerror="this.style.opacity=0.3">
       <div class="card-info">
         <div class="name">${esc(p.name)}</div>
-        <span class="tag" style="background:${color}">${esc(ELEMENT_ZH[p.element] || p.element)}</span>${p.element2 ? `<span class="tag" style="background:${ELEMENT_COLOR[p.element2] || '#8a8175'}">${esc(ELEMENT_ZH[p.element2] || p.element2)}</span>` : ''}
+        <div style="display:flex;gap:6px">${elementTags(p)}</div>
         <div class="meta">作者：${esc(p.authorId)}</div>
         <div class="meta">提交：${fmtTime(p.createdAt)}</div>
         ${p.reportCount ? `<div class="meta">被举报 ${p.reportCount} 次</div>` : ''}
-        ${p.rejectReason ? `<div class="meta" style="color:#c0392b">原因：${esc(p.rejectReason)}</div>` : ''}
+        ${extraMeta}
       </div>
     </div>
     ${reportsHtml}
-    <input class="reject-reason" placeholder="驳回原因（必填）">
-    <div class="card-actions">
-      <button class="secondary" onclick="review('${esc(p.id)}','reject')">驳回</button>
-      <button onclick="review('${esc(p.id)}','approve')">通过上架</button>
-    </div>
+    ${actions}
   </div>`
 }
 
-function renderList(pieces) {
-  $('#empty').style.display = pieces.length ? 'none' : 'block'
-  $('#cards').innerHTML = pieces.map(renderCard).join('')
+function renderMatches(list) {
+  if (!list.length) return ''
+  const rows = list.map(m => `
+    <tr>
+      <td>${fmtDate(m.endedAt)}</td>
+      <td>${m.mode === 'ai' ? '人机' : '真人'}</td>
+      <td>${esc(m.redName)}</td>
+      <td>${esc(m.blueName)}</td>
+      <td>${m.winnerSide === 'red' ? '红方' : m.winnerSide === 'blue' ? '蓝方' : '平局'}</td>
+      <td>${esc(MATCH_REASON_ZH[m.reason] || m.reason)}</td>
+    </tr>`).join('')
+  return `<div class="table-wrap"><table>
+    <tr><th>结束时间</th><th>模式</th><th>红方</th><th>蓝方</th><th>胜方</th><th>结束原因</th></tr>
+    ${rows}
+  </table></div>`
+}
+
+function renderReports(list) {
+  if (!list.length) return ''
+  const rows = list.map(r => `
+    <tr>
+      <td>${fmtDate(r.createdAt)}</td>
+      <td>${esc(r.pieceName)}</td>
+      <td><span class="pill">${esc(r.pieceStatus === 'deleted' ? '已删除' : (r.pieceStatus || ''))}</span></td>
+      <td>${esc(r.reporterId)}</td>
+      <td>${esc(REASON_ZH[r.reason] || r.reason)}</td>
+      <td>${r.matchId ? esc(r.matchId) : '-'}</td>
+    </tr>`).join('')
+  return `<div class="table-wrap"><table>
+    <tr><th>时间</th><th>棋子</th><th>棋子状态</th><th>举报者</th><th>理由</th><th>来源对局</th></tr>
+    ${rows}
+  </table></div>`
+}
+
+function renderList(list) {
+  $('#empty').style.display = list.length ? 'none' : 'block'
+  if (currentPage === 'matches') {
+    $('#cards').innerHTML = renderMatches(list)
+  } else if (currentPage === 'reports') {
+    $('#cards').innerHTML = renderReports(list)
+  } else {
+    $('#cards').innerHTML = list.map(p => renderPieceCard(p, currentPage)).join('')
+  }
 }
 
 // ---------- 数据加载 ----------
@@ -300,50 +470,53 @@ function renderList(pieces) {
 async function loadDashboard() {
   const s = await api('/admin/stats')
   renderStats(s)
-  const list = currentTab === 'pending'
-    ? await api('/pieces/pending')
-    : await api('/pieces/reported')
+  $('#page-title').textContent = PAGES[currentPage].label
+  const list = await api(PAGES[currentPage].endpoint)
   renderList(list)
 }
 
-async function review(id, action) {
-  const card = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`)
-  const reasonInput = card?.querySelector('.reject-reason')
-  const reason = reasonInput?.value.trim()
-
-  if (action === 'reject') {
-    if (!reason) {
-      reasonInput.style.display = 'block'
-      reasonInput.focus()
-      toast('请填写驳回原因')
-      return
-    }
-    reasonInput.style.display = 'block'
-  }
-  if (!confirm(action === 'approve'
-    ? '确认通过并上架该棋子？'
-    : `确认驳回？原因：${reason}`)) return
-
-  const q = `action=${action}${reason ? `&reason=${encodeURIComponent(reason)}` : ''}`
+async function doReview(id, q, okMsg) {
   try {
     await api(`/pieces/${id}/review?${q}`, { method: 'POST' })
-    toast(action === 'approve' ? '已通过上架' : '已驳回')
+    toast(okMsg)
     await loadDashboard()
   } catch (e) {
     toast(`操作失败：${e.message}`)
   }
 }
 
-// ---------- 事件 ----------
+/** 下架：先弹确认窗，确认后才移入回收区 */
+function takedown(id, name) {
+  openModal(
+    '确认下架',
+    `<p>「${esc(name)}」将移入<b>回收区</b>，立即退出公共牌池。</p>
+     <p>回收区保留 <b>30 天</b>，未恢复上架将自动销毁数据。</p>
+     <p>确定要下架吗？</p>`,
+    '确认下架',
+    () => doReview(id, 'action=takedown', '已下架，移入回收区'),
+  )
+}
 
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'))
-    tab.classList.add('active')
-    currentTab = tab.dataset.tab
-    loadDashboard().catch(e => toast(`加载失败：${e.message}`))
-  })
-})
+async function review(id, action) {
+  if (action === 'reject') {
+    const card = document.querySelector(`.card[data-id="${CSS.escape(id)}"]`)
+    const reasonInput = card?.querySelector('.reject-reason')
+    const reason = reasonInput?.value.trim()
+    if (!reason) {
+      if (reasonInput) { reasonInput.style.display = 'block'; reasonInput.focus() }
+      toast('请填写驳回原因')
+      return
+    }
+    if (!confirm(`确认驳回？原因：${reason}`)) return
+    await doReview(id, `action=reject&reason=${encodeURIComponent(reason)}`, '已驳回')
+    return
+  }
+  const isApprove = action === 'approve'
+  if (!confirm(isApprove ? '确认通过并上架该棋子？' : '确认恢复上架该棋子？')) return
+  await doReview(id, `action=${action}`, isApprove ? '已通过上架' : '已恢复上架')
+}
+
+// ---------- 事件 ----------
 
 $('#save-token').addEventListener('click', async () => {
   const token = $('#token').value.trim()

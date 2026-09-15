@@ -14,7 +14,7 @@ interface MyPiece {
   /** 副属性（可选） */
   element2?: string | null
   imageUrl: string
-  status: 'pending' | 'approved' | 'rejected'
+  status: 'pending' | 'approved' | 'rejected' | 'reported' | 'recycled'
   rejectReason?: string | null
 }
 
@@ -22,6 +22,8 @@ const STATUS_TEXT: Record<MyPiece['status'], string> = {
   pending: '待审核',
   approved: '已上架',
   rejected: '未通过',
+  reported: '被举报',
+  recycled: '已下架',
 }
 
 export default function Workshop () {
