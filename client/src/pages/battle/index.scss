@@ -418,37 +418,21 @@
     background: #f4f0e8;
     border: 3px solid #e5dfd3;
     box-sizing: border-box;
-    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s, opacity 0.2s;
+    transition: border-color 0.2s, border-width 0.2s, box-shadow 0.2s, opacity 0.2s;
 
+    /* 有棋子阵营：取消填充底色与自身描边，阵营色由占位卡牌的粗边框呈现（避免内边框圆角与卡牌产生缝隙） */
     &--red {
-      background: #f9dcd7;
-      border-color: #e5a49b;
+      background: #f4f0e8;
+      border-width: 0;
     }
 
     &--blue {
-      background: #dce7fa;
-      border-color: #a8bfe6;
-    }
-
-    /* 双方最新一手：阵营色描边 + 角标 */
-    &--last-red {
-      border-color: #e0654a;
-      box-shadow: 0 0 0 4px rgba(224, 101, 74, 0.25);
-    }
-
-    &--last-blue {
-      border-color: #4f7bd9;
-      box-shadow: 0 0 0 4px rgba(79, 123, 217, 0.25);
-    }
-
-    /* 双方最近一手同格（一手盖住对方最近一手）：中性描边 + 红/蓝双环光晕，两个阵营标记都可见 */
-    &--last-both {
-      border-color: #8a7a66;
-      box-shadow: 0 0 0 4px rgba(224, 101, 74, 0.3), 0 0 0 9px rgba(79, 123, 217, 0.26);
+      background: #f4f0e8;
+      border-width: 0;
     }
 
     /* 已选棋子的可落格：绿色边缘光晕（外发光 + 细绿描边，不覆盖底色，保留红/蓝阵营色；
-       置于 last-* 之后，选中态优先） */
+       置于阵营色之后，选中态优先） */
     &--ok {
       border-color: #2e9e44;
       box-shadow: 0 0 12px 4px rgba(46, 158, 68, 0.55);
@@ -465,41 +449,17 @@
 
   }
 
-  /* 最新一手角标（"红"/"蓝" 小标） */
-  &__last-tag {
-    position: absolute;
-    top: 6px;
-    left: 6px;
-    padding: 2px 10px;
-    border-radius: 999px;
-    font-size: 18px;
-    color: #fff;
-
-    &--red {
-      background: #e0654a;
-    }
-
-    &--blue {
-      background: #4f7bd9;
-    }
-
-    /* 与"红最近"同格时错位到左下，避免两个角标重叠遮盖 */
-    &--offset {
-      top: auto;
-      bottom: 6px;
-    }
-  }
-
-  /* 叠放层数徽章（N/8，满层标红提示不可再叠，未满灰色） */
+  /* 叠放层数徽章（N/8，满层标红提示不可再叠，未满灰色；避让 12px 阵营边框） */
   &__stack-count {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: 15px;
+    right: 15px;
     padding: 2px 10px;
     border-radius: 999px;
     background: rgba(122, 117, 108, 0.88);
     font-size: 20px;
     color: #fff;
+    z-index: 2;
 
     &--full {
       background: #d05048;
@@ -508,19 +468,24 @@
 }
 
 .piece {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  padding: 16px 12px;
-  border-radius: 12px;
-  border: 3px solid transparent;
+  /* 占位卡牌：固定大小铺满整个格子，圆角与格子一致；粗红/蓝边框即阵营（无内边框圆角缝隙） */
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  border: 12px solid transparent;
   background: #fff;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
   overflow: hidden;
 
-  /* 工坊上架卡展示图：铺满棋面，属性/名称浮层在上 */
+  &--red {
+    border-color: #e0654a;
+  }
+
+  &--blue {
+    border-color: #4f7bd9;
+  }
+
+  /* 工坊上架卡展示图：铺满卡面，属性/名称/标记浮层在上 */
   &__img {
     position: absolute;
     inset: 0;
@@ -528,32 +493,62 @@
     height: 100%;
   }
 
-  &__elements,
-  &__name {
-    position: relative;
+  /* 左上角属性（避让 12px 边框） */
+  &__elements {
+    position: absolute;
+    top: 15px;
+    left: 15px;
+    display: flex;
+    gap: 4px;
     z-index: 1;
   }
 
-  &__name {
-    text-shadow: 0 0 3px #fff, 0 1px 2px rgba(255, 255, 255, 0.9), 0 -1px 2px rgba(255, 255, 255, 0.9);
-  }
-
-  &__elements {
-    display: flex;
-    gap: 6px;
-  }
-
   &__element {
-    font-size: 20px;
+    font-size: 16px;
     color: #fff;
-    padding: 4px 14px;
+    padding: 2px 8px;
     border-radius: 999px;
   }
 
+  /* 左下角名称（比属性更小，避让 12px 边框与右下圆点） */
   &__name {
-    font-size: 26px;
+    position: absolute;
+    bottom: 15px;
+    left: 15px;
+    max-width: calc(100% - 70px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 18px;
     font-weight: bold;
     color: #3a3a3a;
+    text-shadow: 0 0 3px #fff, 0 1px 2px rgba(255, 255, 255, 0.9), 0 -1px 2px rgba(255, 255, 255, 0.9);
+    z-index: 1;
+  }
+
+  /* 右下角最新一手红/蓝圆点（同格时并列显示） */
+  &__dots {
+    position: absolute;
+    bottom: 15px;
+    right: 15px;
+    display: flex;
+    gap: 6px;
+    z-index: 1;
+  }
+
+  &__dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px #fff;
+
+    &--red {
+      background: #e0654a;
+    }
+
+    &--blue {
+      background: #4f7bd9;
+    }
   }
 }
 
@@ -645,14 +640,10 @@
 }
 
 .card {
+  /* 手牌卡：等边圆角矩形（正方形），圆角与格子/占位卡牌一致 */
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 140px;
-  height: 108px;
+  width: 132px;
+  height: 132px;
   border-radius: 16px;
   background: #fffdf9;
   border: 3px solid transparent;
@@ -678,29 +669,37 @@
     height: 100%;
   }
 
-  &__elements,
-  &__name {
-    position: relative;
+  /* 左上角属性 */
+  &__elements {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    display: flex;
+    gap: 4px;
     z-index: 1;
   }
 
-  &__elements {
-    display: flex;
-    gap: 6px;
-  }
-
   &__element {
-    font-size: 20px;
+    font-size: 16px;
     color: #fff;
-    padding: 2px 12px;
+    padding: 2px 8px;
     border-radius: 999px;
   }
 
+  /* 左下角名称 */
   &__name {
-    font-size: 24px;
+    position: absolute;
+    bottom: 6px;
+    left: 6px;
+    max-width: calc(100% - 12px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 18px;
     font-weight: bold;
     color: #3a3a3a;
     text-shadow: 0 0 3px #fff, 0 1px 2px rgba(255, 255, 255, 0.9), 0 -1px 2px rgba(255, 255, 255, 0.9);
+    z-index: 1;
   }
 }
 
