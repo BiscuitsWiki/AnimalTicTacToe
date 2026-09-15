@@ -21,8 +21,8 @@ export const ELEMENTS: Element[] = [
 /** 中文属性名（UI 展示用） */
 export const ELEMENT_NAMES_ZH: Record<Element, string> = {
   fire: '火', water: '水', grass: '草', electric: '电', ice: '冰', poison: '毒',
-  bug: '虫', dragon: '龙', dark: '恶', ghost: '幽', normal: '普通', martial: '武',
-  earth: '地', wing: '翼', illusion: '幻', light: '光', machine: '机械', cute: '萌',
+  bug: '虫', dragon: '龙', dark: '恶', ghost: '幽', normal: '普', martial: '武',
+  earth: '地', wing: '翼', illusion: '幻', light: '光', machine: '机', cute: '萌',
 }
 
 /** 属性主题色（UI 展示用，对照《洛克王国：世界》官方派系色） */
