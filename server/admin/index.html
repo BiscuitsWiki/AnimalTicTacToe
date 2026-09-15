@@ -182,13 +182,15 @@
 
   /* 表格子页（对局 / 举报） */
   .table-wrap {
+    grid-column: 1 / -1;
     background: #fffdf9;
     border-radius: 16px;
     border: 1px solid #eee6d8;
     overflow-x: auto;
   }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #f0e9dc; white-space: nowrap; }
+  th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #f0e9dc; word-break: break-all; }
+  th.nowrap, td.nowrap { white-space: nowrap; }
   th { background: #faf6ef; color: #8a8175; font-weight: 600; }
   tr:last-child td { border-bottom: none; }
   .pill {
@@ -424,15 +426,15 @@ function renderMatches(list) {
   if (!list.length) return ''
   const rows = list.map(m => `
     <tr>
-      <td>${fmtDate(m.endedAt)}</td>
-      <td>${m.mode === 'ai' ? '人机' : '真人'}</td>
+      <td class="nowrap">${fmtDate(m.endedAt)}</td>
+      <td class="nowrap">${m.mode === 'ai' ? '人机' : '真人'}</td>
       <td>${esc(m.redName)}</td>
       <td>${esc(m.blueName)}</td>
-      <td>${m.winnerSide === 'red' ? '红方' : m.winnerSide === 'blue' ? '蓝方' : '平局'}</td>
-      <td>${esc(MATCH_REASON_ZH[m.reason] || m.reason)}</td>
+      <td class="nowrap">${m.winnerSide === 'red' ? '红方' : m.winnerSide === 'blue' ? '蓝方' : '平局'}</td>
+      <td class="nowrap">${esc(MATCH_REASON_ZH[m.reason] || m.reason)}</td>
     </tr>`).join('')
   return `<div class="table-wrap"><table>
-    <tr><th>结束时间</th><th>模式</th><th>红方</th><th>蓝方</th><th>胜方</th><th>结束原因</th></tr>
+    <tr><th class="nowrap">结束时间</th><th class="nowrap">模式</th><th>红方</th><th>蓝方</th><th class="nowrap">胜方</th><th class="nowrap">结束原因</th></tr>
     ${rows}
   </table></div>`
 }
@@ -441,15 +443,15 @@ function renderReports(list) {
   if (!list.length) return ''
   const rows = list.map(r => `
     <tr>
-      <td>${fmtDate(r.createdAt)}</td>
+      <td class="nowrap">${fmtDate(r.createdAt)}</td>
       <td>${esc(r.pieceName)}</td>
-      <td><span class="pill">${esc(r.pieceStatus === 'deleted' ? '已删除' : (r.pieceStatus || ''))}</span></td>
+      <td class="nowrap"><span class="pill">${esc(r.pieceStatus === 'deleted' ? '已删除' : (r.pieceStatus || ''))}</span></td>
       <td>${esc(r.reporterId)}</td>
-      <td>${esc(REASON_ZH[r.reason] || r.reason)}</td>
+      <td class="nowrap">${esc(REASON_ZH[r.reason] || r.reason)}</td>
       <td>${r.matchId ? esc(r.matchId) : '-'}</td>
     </tr>`).join('')
   return `<div class="table-wrap"><table>
-    <tr><th>时间</th><th>棋子</th><th>棋子状态</th><th>举报者</th><th>理由</th><th>来源对局</th></tr>
+    <tr><th class="nowrap">时间</th><th>棋子</th><th class="nowrap">棋子状态</th><th>举报者</th><th class="nowrap">理由</th><th>来源对局</th></tr>
     ${rows}
   </table></div>`
 }
