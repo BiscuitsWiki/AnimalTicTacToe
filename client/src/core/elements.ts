@@ -24,12 +24,12 @@ export const ELEMENT_NAMES_ZH: Record<Element, string> = {
   earth: '地', wing: '翼', illusion: '幻', light: '光', machine: '机械', cute: '萌',
 }
 
-/** 属性主题色（UI 展示用） */
+/** 属性主题色（UI 展示用，对照《洛克王国：世界》官方派系色） */
 export const ELEMENT_COLORS: Record<Element, string> = {
-  fire: '#f0803c', water: '#4f90e0', grass: '#5cb85c', electric: '#e8c531', ice: '#6fc7d4',
-  poison: '#a050a8', bug: '#9ab028', dragon: '#6858d8', dark: '#6f5a48', ghost: '#7060a0',
-  normal: '#a0a090', martial: '#d05048', earth: '#cfa452', wing: '#8f92e0', illusion: '#a86ad8',
-  light: '#e8c94f', machine: '#8a97ad', cute: '#ee9ab4',
+  fire: '#db5525', water: '#6aa9fe', grass: '#4ebc73', electric: '#e7c506', ice: '#5faddd',
+  poison: '#ba62e0', bug: '#94c11f', dragon: '#ed4962', dark: '#cf467a', ghost: '#9446ec',
+  normal: '#3f89b4', martial: '#ff9636', earth: '#9a7e3f', wing: '#3ec7ca', illusion: '#9198e2',
+  light: '#4fc0ff', machine: '#40cba9', cute: '#fc7cac',
 }
 
 /**
