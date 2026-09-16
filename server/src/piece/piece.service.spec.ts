@@ -81,6 +81,15 @@ describe('PieceService 提交（卡牌 + 皮肤）', () => {
     await expect(service.submit({ ...base, element: 'fire', element2: 'cute' })).resolves.toBeTruthy()
   })
 
+  it('同名双属性：主/副顺序不同视为同一组合（幻/电 提交到 电/幻 的卡）', async () => {
+    const { service, skins } = makeService([
+      { cardId: 'c-star', cardName: '粉粉星', element: 'electric', element2: 'illusion', source: 'workshop' },
+    ])
+    await service.submit({ ...base, name: '粉粉星', element: 'illusion', element2: 'electric' })
+    expect(skins).toHaveLength(1)
+    expect(skins[0].cardId).toBe('c-star')
+  })
+
   it('预设卡：同名提交作为其新皮肤（属性需与预设一致）', async () => {
     const { service, skins } = makeService([
       { cardId: 'pc-d01', cardName: '炎尾狐', element: 'fire', element2: null, source: 'preset' },

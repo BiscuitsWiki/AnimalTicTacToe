@@ -43,6 +43,19 @@ function elementLabel(element: string, element2?: string | null): string {
   return element2 ? `${zh(element)}/${zh(element2)}` : zh(element)
 }
 
+/**
+ * 属性组合是否相同（主/副顺序无关）：进攻择优、防守连乘均与顺序无关，
+ * 「幻/电」与「电/幻」是同一组合，不视为同名卡属性冲突。
+ */
+function sameElementCombo(
+  a: { element: string; element2?: string | null },
+  b: { element: string; element2?: string | null },
+): boolean {
+  const combo = (x: { element: string; element2?: string | null }) =>
+    [x.element, ...(x.element2 ? [x.element2] : [])].sort().join('|')
+  return combo(a) === combo(b)
+}
+
 @Injectable()
 export class PieceService {
   private readonly logger = new Logger(PieceService.name)
@@ -85,12 +98,23 @@ export class PieceService {
         })
         continue
       }
-      const sameElement =
-        existing.element === preset.element && (existing.element2 ?? null) === (preset.element2 ?? null)
+      const sameElement = sameElementCombo(existing, preset)
       if (sameElement) {
-        if (existing.source !== 'preset') {
-          await this.prisma.card.update({ where: { cardId: existing.cardId }, data: { source: 'preset' } })
-          this.logger.log(`预设卡收编同名卡牌「${preset.name}」(${existing.cardId})`)
+        const canonicalOrder =
+          existing.element === preset.element && (existing.element2 ?? null) === (preset.element2 ?? null)
+        if (existing.source !== 'preset' || !canonicalOrder) {
+          // 收编为预设卡：属性以预设定义为准（含主/副顺序规范化）
+          await this.prisma.card.update({
+            where: { cardId: existing.cardId },
+            data: {
+              element: preset.element,
+              element2: preset.element2 ?? null,
+              source: 'preset',
+            },
+          })
+          this.logger.log(
+            `预设卡收编同名卡牌「${preset.name}」(${existing.cardId})：属性规范为 ${elementLabel(preset.element, preset.element2)}`,
+          )
         }
         continue
       }
@@ -183,7 +207,8 @@ export class PieceService {
   }
 
   private assertCardElement(card: Card, input: { element: string; element2: string | null }): Card {
-    if (card.element !== input.element || (card.element2 ?? null) !== input.element2) {
+    // 主/副顺序不敏感：「幻/电」提交到「电/幻」的卡视为同一组合，不拒绝
+    if (!sameElementCombo(card, input)) {
       throw new BadRequestException(
         `该名称已有卡牌（${elementLabel(card.element, card.element2)}），属性需与之一致；如需不同属性请改名`,
       )

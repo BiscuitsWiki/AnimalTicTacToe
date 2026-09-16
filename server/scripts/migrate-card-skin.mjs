@@ -70,6 +70,12 @@ async function exportLegacy() {
   return { pieces, reports }
 }
 
+/** 属性组合是否相同（主/副顺序无关：进攻择优、防守连乘均与顺序无关） */
+function sameElementCombo(a, b) {
+  const combo = x => [x.element, ...(x.element2 ? [x.element2] : [])].sort().join('|')
+  return combo(a) === combo(b)
+}
+
 /** 按名称归并：最早的皮肤行作为卡牌属性权威 */
 function plan(legacy) {
   const groups = new Map()
@@ -82,7 +88,7 @@ function plan(legacy) {
   for (const [name, list] of groups) {
     const head = list[0]
     for (const r of list.slice(1)) {
-      if (r.element !== head.element || (r.element2 ?? null) !== (head.element2 ?? null)) {
+      if (!sameElementCombo(r, head)) {
         conflicts.push({
           name,
           skinId: r.id,
