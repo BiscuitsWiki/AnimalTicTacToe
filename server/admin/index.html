@@ -83,6 +83,44 @@
     padding-left: 10px;
   }
 
+  /* 属性检索栏（全部 / 单属性 / 双属性组合） */
+  .filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .filter-bar .tip { font-size: 12px; color: #8a8175; margin-left: 6px; }
+  .el-chip {
+    padding: 4px 12px;
+    border-radius: 999px;
+    border: 1px solid #d8d0c2;
+    background: #fff;
+    font-size: 13px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .el-chip:hover { border-color: #b9ab93; }
+  .el-chip.on { color: #fff; }
+
+  /* 按卡牌聚合（同名即同一张卡：卡头 + 各款皮肤） */
+  .card-group {
+    grid-column: 1 / -1;
+    background: #fffdf9;
+    border-radius: 16px;
+    border: 1px solid #eee6d8;
+    padding: 16px;
+  }
+  .card-group-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .card-group-head .name { font-size: 17px; font-weight: bold; }
+  .card-group-head .count { margin-left: auto; font-size: 12px; color: #8a8175; }
+
   .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
   .card {
     background: #fffdf9;
@@ -218,6 +256,7 @@
   <div id="dashboard" style="display:none">
     <div class="stats" id="stats"></div>
     <div class="page-title" id="page-title"></div>
+    <div class="filter-bar" id="filter-bar" style="display:none"></div>
     <div class="cards" id="cards"></div>
     <div class="empty" id="empty" style="display:none">队列为空，喝杯茶吧 ☕</div>
   </div>
@@ -265,16 +304,19 @@ const MATCH_REASON_ZH = {
   resign: '认输', opponent_disconnect: '对手超时',
 }
 
-/** 子页面定义：信息块点击后切换到这里 */
+/** 子页面定义：信息块点击后切换到这里（kind: piece = 卡牌/皮肤队列，带属性检索栏） */
 const PAGES = {
-  pending:  { label: '待审核', endpoint: '/pieces/pending' },
-  reported: { label: '被举报', endpoint: '/pieces/reported' },
-  approved: { label: '上架中', endpoint: '/pieces/approved-full' },
-  recycled: { label: '回收区', endpoint: '/pieces/recycled' },
-  rejected: { label: '已驳回', endpoint: '/pieces/rejected' },
+  pending:  { label: '待审核', endpoint: '/pieces/pending', kind: 'piece' },
+  reported: { label: '被举报', endpoint: '/pieces/reported', kind: 'piece' },
+  approved: { label: '上架中', endpoint: '/pieces/approved-full', kind: 'piece' },
+  recycled: { label: '回收区', endpoint: '/pieces/recycled', kind: 'piece' },
+  rejected: { label: '已驳回', endpoint: '/pieces/rejected', kind: 'piece' },
   matches:  { label: '对局记录', endpoint: '/admin/matches' },
   reports:  { label: '举报明细', endpoint: '/admin/reports' },
 }
+
+/** 属性检索：空 = 全部；1 个 = 单属性；2 个 = 双属性组合（无序，主/副任一命中） */
+let elementFilter = []
 
 function getToken() { return localStorage.getItem(TOKEN_KEY) || '' }
 function authHeaders() { return { 'x-admin-token': getToken() } }
@@ -336,9 +378,10 @@ function renderStats(s) {
   const cards = [
     { page: 'pending', num: s.pieces.pending, label: '待审核', alert: s.pieces.pending > 0 },
     { page: 'reported', num: s.pieces.reported, label: '被举报', alert: s.pieces.reported > 0 },
-    { page: 'approved', num: s.pieces.approved, label: '上架中' },
+    { page: 'approved', num: s.pieces.approved, label: '上架中皮肤' },
     { page: 'recycled', num: s.pieces.recycled, label: '回收区', alert: s.pieces.recycled > 0 },
     { page: 'rejected', num: s.pieces.rejected, label: '已驳回' },
+    { page: 'approved', num: s.cards.total, label: `卡牌总数（预设 ${s.cards.preset}）` },
     { page: 'matches', num: s.matches.today, label: '今日对局' },
     { page: 'matches', num: s.matches.total, label: '累计对局' },
     { page: 'reports', num: s.reports.today, label: '今日举报' },
@@ -349,6 +392,69 @@ function renderStats(s) {
        <div class="num ${c.alert ? 'alert' : ''}">${c.num}</div>
        <div class="label">${c.label}</div>
      </div>`).join('')
+}
+
+// ---------- 属性检索（全部 / 单属性 / 双属性组合） ----------
+
+/** 皮肤行的属性集合（主 + 可选副，去重） */
+function elementsOf(p) {
+  return p.element2 && p.element2 !== p.element ? [p.element, p.element2] : [p.element]
+}
+
+/** 检索：主/副任一命中；组合为无序匹配（所选属性需全部命中） */
+function matchFilter(p) {
+  if (elementFilter.length === 0) return true
+  const els = elementsOf(p)
+  return elementFilter.every(el => els.includes(el))
+}
+
+function filterSummary() {
+  if (elementFilter.length === 0) return '全部卡牌'
+  if (elementFilter.length === 1) return `含「${ELEMENT_ZH[elementFilter[0]]}」属性（主/副任一命中）`
+  return `${elementFilter.map(el => ELEMENT_ZH[el]).join('+')} 组合（无序匹配）`
+}
+
+/** 检索栏点击（最多选 2 个属性，超出时滑动替换最早的一个） */
+function toggleEl(el) {
+  if (el === '__all__') {
+    elementFilter = []
+  } else if (elementFilter.includes(el)) {
+    elementFilter = elementFilter.filter(x => x !== el)
+  } else {
+    elementFilter = [...elementFilter, el].slice(-2)
+  }
+  loadDashboard().catch(e => toast(`加载失败：${e.message}`))
+}
+
+function renderFilterBar(show) {
+  const bar = $('#filter-bar')
+  if (!show) {
+    bar.style.display = 'none'
+    bar.innerHTML = ''
+    return
+  }
+  const chip = (key, label, color, on) => {
+    const style = on && color ? `background:${color};border-color:${color};color:#fff`
+      : color ? `color:${color}` : ''
+    return `<span class="el-chip ${on ? 'on' : ''}" style="${style}" onclick="toggleEl('${key}')">${esc(label)}</span>`
+  }
+  bar.style.display = 'flex'
+  bar.innerHTML =
+    chip('__all__', '全部', '', elementFilter.length === 0) +
+    Object.keys(ELEMENT_ZH).map(el => chip(el, ELEMENT_ZH[el], ELEMENT_COLOR[el], elementFilter.includes(el))).join('') +
+    `<span class="tip">当前：${esc(filterSummary())}</span>`
+}
+
+/** 按卡牌聚合（同名即同一张卡） */
+function groupByCard(list) {
+  const groups = new Map()
+  for (const p of list) {
+    const key = p.cardId || `name:${p.name}`
+    const g = groups.get(key)
+    if (g) g.skins.push(p)
+    else groups.set(key, { name: p.name, element: p.element, element2: p.element2, skins: [p] })
+  }
+  return [...groups.values()]
 }
 
 function switchPage(page) {
@@ -456,14 +562,32 @@ function renderReports(list) {
   </table></div>`
 }
 
+/** 上架中页面：按卡牌聚合（卡头 + 各款皮肤，皮肤仍可单独下架） */
+function renderCardGroups(list, mode) {
+  return groupByCard(list).map(g => `
+    <div class="card-group">
+      <div class="card-group-head">
+        <span class="name">${esc(g.name)}</span>
+        <span style="display:flex;gap:6px">${elementTags(g)}</span>
+        <span class="count">${g.skins.length} 款皮肤</span>
+      </div>
+      <div class="cards">${g.skins.map(p => renderPieceCard(p, mode)).join('')}</div>
+    </div>`).join('')
+}
+
 function renderList(list) {
-  $('#empty').style.display = list.length ? 'none' : 'block'
+  const isPiecePage = PAGES[currentPage].kind === 'piece'
+  renderFilterBar(isPiecePage)
+  const shown = isPiecePage ? list.filter(matchFilter) : list
+  $('#empty').style.display = shown.length ? 'none' : 'block'
   if (currentPage === 'matches') {
-    $('#cards').innerHTML = renderMatches(list)
+    $('#cards').innerHTML = renderMatches(shown)
   } else if (currentPage === 'reports') {
-    $('#cards').innerHTML = renderReports(list)
+    $('#cards').innerHTML = renderReports(shown)
+  } else if (currentPage === 'approved') {
+    $('#cards').innerHTML = renderCardGroups(shown, currentPage)
   } else {
-    $('#cards').innerHTML = list.map(p => renderPieceCard(p, currentPage)).join('')
+    $('#cards').innerHTML = shown.map(p => renderPieceCard(p, currentPage)).join('')
   }
 }
 

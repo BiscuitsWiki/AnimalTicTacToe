@@ -9,12 +9,25 @@ import { API_BASE, authHeader } from './auth'
 export { API_BASE } from './auth'
 
 export interface ApiPiece {
+  /** 皮肤 id（skinId，审核/下架/举报粒度） */
   id: string
+  /** 所属卡牌 id（同名即同一张卡，卡牌持有名称与属性） */
+  cardId?: string
   name: string
   element: string
   /** 副属性（可选） */
   element2?: string | null
   imageUrl: string
+}
+
+/** 卡牌信息（工坊提交时的"同名卡"提示：同名即同一张卡，属性以卡牌为准） */
+export interface ApiCardLookup {
+  cardId: string
+  name: string
+  element: string
+  element2?: string | null
+  source: string
+  approvedSkinCount: number
 }
 
 export async function getJSON<T>(path: string): Promise<T> {
@@ -130,9 +143,14 @@ function compressH5(src: string, maxEdge: number): Promise<Blob | null> {
   })
 }
 
-/** 公共池（审核通过的棋子） */
+/** 公共池（审核通过的皮肤，含所属卡牌名称与属性） */
 export function fetchApprovedPieces(): Promise<ApiPiece[]> {
   return getJSON<ApiPiece[]>('/pieces/approved?limit=100')
+}
+
+/** 按名称查卡牌（未占用时返回 null；用于提交时的同名卡提示与属性锁定） */
+export function fetchCardByName(name: string): Promise<ApiCardLookup | null> {
+  return getJSON<ApiCardLookup | null>(`/pieces/card?name=${encodeURIComponent(name)}`)
 }
 
 /** 单模式胜负平小计 */

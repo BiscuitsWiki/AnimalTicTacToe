@@ -13,6 +13,9 @@ vi.hoisted(() => {
 // eslint-disable-next-line import/first
 import { MatchService } from './match.service.js'
 import type { ClientView } from './match.service.js'
+import { PRESET_CARDS } from './core/pieces.js'
+import { DECK_SIZE } from './core/deck.js'
+import type { CardWithSkins } from './core/deck.js'
 
 /** 可记录消息的最小 socket 替身 */
 class FakeSocket {
@@ -33,8 +36,8 @@ class FakeSocket {
   }
 }
 
-function makeService(approved: unknown[] = []) {
-  const pieceService = { listApproved: async () => approved }
+function makeService(pool: CardWithSkins[] = PRESET_CARDS) {
+  const pieceService = { listPlayableCards: async () => pool }
   const prisma = {
     match: { create: async () => ({ id: 'db-match-1' }) },
     matchAction: { createMany: async () => ({ count: 0 }) },
@@ -55,7 +58,7 @@ async function startGame() {
 }
 
 describe('MatchService 牌堆构建', () => {
-  it('无上架卡：整副预设 51 张入局', async () => {
+  it('无工坊皮肤：整副预设卡池抽 60 张（开局发 6 张 → 牌堆余 54）', async () => {
     const service = makeService()
     const red = new FakeSocket()
     const blue = new FakeSocket()
@@ -64,13 +67,17 @@ describe('MatchService 牌堆构建', () => {
       { playerId: 'b', name: '蓝方', socket: blue },
     )
     const view = red.views()[0]
-    // 51 张 - 双方起始手牌 6 张 = 45
-    expect(view.state.deck.length).toBe(45)
+    expect(view.state.deck.length).toBe(DECK_SIZE - 6)
+    // 本方手牌明文：全部来自预设卡内置外观（d01~d51）
+    expect(view.state.hands.red.every((p: { id: string }) => /^d\d{2}$/.test(p.id))).toBe(true)
   })
 
-  it('预设 + 上架卡全部混合：51 + N 张入局（不截断、不互斥）', async () => {
-    const approved = Array.from({ length: 3 }, (_, i) => ({ id: `w${i}`, name: `上架卡${i}`, element: 'fire' }))
-    const service = makeService(approved)
+  it('预设 + 工坊皮肤：牌堆精确 60 张，牌面只来自卡池（含工坊皮肤 id）', async () => {
+    const pool: CardWithSkins[] = [
+      ...PRESET_CARDS,
+      { cardId: 'w1', name: '工坊卡', element: 'fire', skins: [{ skinId: 'w-s1', imageUrl: '/uploads/a.png' }] },
+    ]
+    const service = makeService(pool)
     const red = new FakeSocket()
     const blue = new FakeSocket()
     await service.startDirectMatch(
@@ -78,25 +85,42 @@ describe('MatchService 牌堆构建', () => {
       { playerId: 'b', name: '蓝方', socket: blue },
     )
     const view = red.views()[0]
-    // 51 + 3 - 双方起始手牌 6 张 = 48
-    expect(view.state.deck.length).toBe(48)
-    // 本方手牌明文：每张来自预设池或上架卡（混合无占位混入）
-    expect(view.state.hands.red.every((p: { id: string }) =>
-      /^d\d{2}$/.test(p.id) || ['w0', 'w1', 'w2'].includes(p.id),
-    )).toBe(true)
+    const deckTotal = view.state.deck.length + view.state.hands.red.length + view.state.hands.blue.length
+    expect(deckTotal).toBe(DECK_SIZE)
+    const allowed = new Set<string>([
+      ...PRESET_CARDS.map(c => c.skins[0].skinId),
+      'w-s1',
+    ])
+    expect(view.state.hands.red.every((p: { id: string }) => allowed.has(p.id))).toBe(true)
   })
 
-  it('上架卡超过预设量级（40 张）：91 张全部入局', async () => {
-    const approved = Array.from({ length: 40 }, (_, i) => ({ id: `a${i}`, name: `卡${i}`, element: 'fire' }))
-    const service = makeService(approved)
+  it('工坊皮肤充足时：同名卡副本使用不同皮肤（阶段四）', async () => {
+    // 5 张工坊卡各 3 款皮肤（火属性单属性卡：与预设 2 张火属性卡竞争阶段一名额）
+    const pool: CardWithSkins[] = [
+      ...PRESET_CARDS,
+      ...Array.from({ length: 5 }, (_, i) => ({
+        cardId: `w${i}`,
+        name: `工坊卡${i}`,
+        element: 'fire' as const,
+        skins: [{ skinId: `w${i}-s1` }, { skinId: `w${i}-s2` }, { skinId: `w${i}-s3` }],
+      })),
+    ]
+    const service = makeService(pool)
     const red = new FakeSocket()
     const blue = new FakeSocket()
     await service.startDirectMatch(
       { playerId: 'r', name: '红方', socket: red },
       { playerId: 'b', name: '蓝方', socket: blue },
     )
-    const view = red.views()[0]
-    expect(view.state.deck.length).toBe(85)   // 51 + 40 - 6
+    const service2 = service as unknown as { rooms: Map<string, { state: { deck: unknown[]; hands: Record<string, { id: string; cardId?: string }[]> } }> }
+    const state = [...service2.rooms.values()][0].state
+    const all = [...state.deck, ...state.hands.red, ...state.hands.blue] as { id: string; cardId?: string }[]
+    expect(all).toHaveLength(DECK_SIZE)
+    const byCard = new Map<string, string[]>()
+    for (const p of all) byCard.set(p.cardId!, [...(byCard.get(p.cardId!) ?? []), p.id])
+    for (const [cardId, ids] of byCard) {
+      if (ids.length > 1) expect(new Set(ids).size, `${cardId} 副本皮肤重复`).toBe(ids.length)
+    }
   })
 })
 

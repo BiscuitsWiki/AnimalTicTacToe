@@ -127,6 +127,46 @@
     border-color: #c9bfae;
     color: #b0a89a;
   }
+
+  /* 同名卡命中时属性锁定（属性以卡牌为准） */
+  &--locked {
+    opacity: 0.7;
+  }
+}
+
+/* 属性检索栏 */
+.filter-elements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+/* 按卡牌聚合（同名即同一张卡：卡头 + 各款皮肤） */
+.card-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  background: #f4f0e8;
+
+  &__head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  &__name {
+    font-size: 26px;
+    font-weight: bold;
+    color: #3a3a3a;
+  }
+
+  &__count {
+    margin-left: auto;
+    font-size: 20px;
+    color: #a39a89;
+  }
 }
 
 .upload {

@@ -172,7 +172,7 @@ sudo docker compose -p att ps                          # ⑤ CREATED 应为 "xx 
 
 - `--force-recreate` 必加：镜像未变时 `up` 只显示 Running 空转，容器不会换新（踩过）
 - `Built 0.x 秒` = 全命中缓存 → 很可能代码没进来，回 ② 检查解压
-- **改了 Prisma schema 无需手动迁移**：容器启动命令自动 `prisma db push`（无损加列）
+- **卡牌/皮肤数据迁移自动执行**：容器启动命令先跑 `node scripts/migrate-card-skin.mjs`（内含 `prisma db push`；把旧 Piece 表按名称归并为 Card + Skin，同名不同属性的皮肤自动驳回，幂等可重复执行），再起服务；旧库升级只需换镜像重启
 - **改了 docker-compose.yml 时注意**：`environment:` 是白名单制，`.env` 里的变量必须显式列进 `environment` 才会注入容器（踩过：TENCENT 密钥在 .env 里但没进容器）
 - 服务器上写 `.env` 等多行操作**拆成单条 `echo ... | sudo tee -a`**，避免 SSH 断线打断 heredoc 产生重复/残缺行（踩过）；写完 `sudo grep <KEY> /opt/att/.env` 验证；`.env` 变更后 `up -d --force-recreate` 生效（不必 --build），用 `exec server printenv` 复核
 

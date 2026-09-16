@@ -18,6 +18,7 @@ RUN pnpm install --frozen-lockfile
 COPY prisma ./prisma
 COPY src ./src
 COPY admin ./admin
+COPY scripts ./scripts
 COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 RUN pnpm exec prisma generate && pnpm build
 
@@ -28,5 +29,5 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-# 启动：初始化/同步数据库结构（无 migrations，用 db push）→ 起服务
-CMD ["sh", "-c", "mkdir -p /app/data /app/uploads && pnpm exec prisma db push --skip-generate && node dist/main"]
+# 启动：卡牌/皮肤数据迁移（内含 prisma db push，幂等）→ 起服务
+CMD ["sh", "-c", "mkdir -p /app/data /app/uploads && node scripts/migrate-card-skin.mjs && node dist/main"]

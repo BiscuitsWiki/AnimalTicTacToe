@@ -20,12 +20,15 @@ export const BOARD_SIZE = 9
 
 /** 一张棋子卡（主属性必选，副属性可选：进攻择优、防守连乘，见 core/elements captureMultiplier） */
 export interface Piece {
+  /** 皮肤 id（skinId）：同一张卡的不同图片各持一个皮肤 id；预设卡内置外观沿用预设 id（如 d01） */
   id: string
+  /** 所属卡牌 id（同名即同一张卡，卡牌持有名称与属性）；预设卡为 pc-<预设 id> */
+  cardId?: string
   name: string
   element: Element
   /** 副属性（可选）；与主属性相同时按单属性处理 */
   element2?: Element
-  /** 工坊上架卡展示图（可选，/uploads 相对路径）；预设卡无图走纯文字样式 */
+  /** 皮肤展示图（可选，/uploads 相对路径）；预设卡内置外观无图，走纯文字样式 */
   imageUrl?: string
 }
 

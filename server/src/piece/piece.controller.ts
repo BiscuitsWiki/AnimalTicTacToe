@@ -107,6 +107,12 @@ export class PieceController {
     return this.pieceService.listApproved(limit ? Number(limit) : undefined)
   }
 
+  /** 按名称查卡牌（工坊提交时提示"同名即同一张卡"及其属性）；未占用返回 null */
+  @Get('card')
+  lookupCard(@Query('name') name?: string) {
+    return this.pieceService.lookupCard(name ?? '')
+  }
+
   /** 我的棋子（登录态下按当前用户查询） */
   @Get('mine')
   async listMine(@Headers() headers: Record<string, string>, @Query('authorId') authorId?: string) {
@@ -160,7 +166,7 @@ export class PieceController {
     throttle(`pieces:report:${ip}`, 10)
     const user = await this.auth.verifyTokenOrNull(this.bearer(headers))
     return this.pieceService.report({
-      pieceId: id,
+      skinId: id,
       reporterId: user?.id ?? body?.reporterId,
       matchId: body?.matchId,
       reason: body?.reason,

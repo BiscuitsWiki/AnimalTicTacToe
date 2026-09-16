@@ -23,25 +23,43 @@ model User {
   @@unique([provider, openId])
 }
 
-// 棋子卡（UGC 创作内容）
+// 卡牌（同名即同一张卡：名称与属性唯一，皮肤可有多个）
+// 卡牌身份 = cardId（cardName 唯一），属性由卡牌持有；预设 51 张由服务启动时幂等 seed（source=preset）
+model Card {
+  cardId    String   @id @default(cuid())
+  cardName  String   @unique              // 卡牌名（1~12 字，trim 后精确匹配）
+  element   String                       // 18 属性之一（服务端校验白名单）
+  element2  String?                      // 副属性（可选，白名单校验且不得与主属性相同；进攻择优/防守连乘）
+  source    String   @default("workshop") // preset（内置预设卡，含无图内置外观）| workshop（工坊创作卡）
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  skins Skin[]
+
+  @@index([element])
+}
+
+// 皮肤（同一张卡的不同图片；审核/下架/回收/举报均按皮肤粒度）
 // 审核状态机: pending -> approved / rejected；上架后被举报达到阈值自动回退 reported（举报链路）
 // 手动下架进 recycled（回收区），超过 30 天未恢复上架则销毁数据
-model Piece {
-  id          String   @id @default(cuid())
-  name        String                     // 棋子名（1~12 字）
-  element     String                     // 18 属性之一（服务端校验白名单）
-  element2    String?                    // 副属性（可选，白名单校验且不得与主属性相同；进攻择优/防守连乘）
-  imageUrl    String                     // 图片 URL（开发期: /uploads/xxx.png）
-  status      String   @default("pending") // pending | approved | rejected | reported | recycled
-  rejectReason String?                 // 驳回原因（rejected 时展示给创作者）
-  reportCount Int      @default(0)     // 有效举报计数（达到阈值自动下架重审）
-  authorId    String   @default("guest") // P2.2 接入微信登录后替换
-  recycledAt  DateTime?                 // 进入回收区时间（recycled 状态必填，30 天过期销毁）
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model Skin {
+  skinId       String   @id @default(cuid())
+  cardId       String                     // 所属卡牌（属性与名称以卡牌为准）
+  imageUrl     String                     // 图片 URL（开发期: /uploads/xxx.png）
+  status       String   @default("pending") // pending | approved | rejected | reported | recycled
+  rejectReason String?                    // 驳回原因（rejected 时展示给创作者）
+  reportCount  Int      @default(0)       // 有效举报计数（达到阈值自动下架重审）
+  authorId     String   @default("guest") // P2.2 接入微信登录后替换
+  recycledAt   DateTime?                  // 进入回收区时间（recycled 状态必填，30 天过期销毁）
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  card    Card         @relation(fields: [cardId], references: [cardId])
+  reports SkinReport[]
 
   @@index([status])
   @@index([authorId])
+  @@index([cardId])
 }
 
 // 对局记录（P2.3：结束时一次性落库，winnerSide 空表示对局丢失）
@@ -76,16 +94,18 @@ model MatchAction {
   @@index([matchId])
 }
 
-// 棋子举报（P3：对局内举报可疑 UGC 内容）
-model PieceReport {
+// 皮肤举报（P3：对局内举报可疑 UGC 内容，按皮肤粒度）
+model SkinReport {
   id         String   @id @default(cuid())
-  pieceId    String
+  skinId     String
   reporterId String                     // 举报者 playerId
   matchId    String?                    // 举报来源对局（追溯用）
   reason     String                     // 举报理由（预设标签）
   createdAt  DateTime @default(now())
 
-  // 同一玩家对同一棋子只计一次有效举报
-  @@unique([pieceId, reporterId])
-  @@index([pieceId])
+  skin Skin @relation(fields: [skinId], references: [skinId])
+
+  // 同一玩家对同一皮肤只计一次有效举报
+  @@unique([skinId, reporterId])
+  @@index([skinId])
 }

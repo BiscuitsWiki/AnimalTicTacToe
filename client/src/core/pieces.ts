@@ -6,7 +6,8 @@
  *           仅取名字与属性组合事实，不涉及形象与文本）。
  */
 import type { Piece } from './types'
-import { shuffle } from './engine'
+import { buildGameDeck } from './deck'
+import type { CardWithSkins } from './deck'
 
 export const PRESET_DECK: Piece[] = [
   { id: 'd01', name: '炎尾狐', element: 'fire' },
@@ -63,7 +64,19 @@ export const PRESET_DECK: Piece[] = [
   { id: 'd51', name: '暗影冰龙王', element: 'ice', element2: 'ghost' },      // 冰/幽
 ]
 
-/** 生成一副洗好的共用牌堆（51 张：36 单属性 + 15 双属性） */
+/** 预设卡牌 id 前缀：卡牌身份 id（与服务端 seed 的 Card.cardId 一致） */
+export const PRESET_CARD_PREFIX = 'pc-'
+
+/** 预设卡牌（卡池输入形态）：内置外观 = 该卡的一款无图皮肤（skinId 沿用预设棋子 id） */
+export const PRESET_CARDS: CardWithSkins[] = PRESET_DECK.map(p => ({
+  cardId: `${PRESET_CARD_PREFIX}${p.id}`,
+  name: p.name,
+  element: p.element,
+  ...(p.element2 ? { element2: p.element2 } : {}),
+  skins: [{ skinId: p.id }],
+}))
+
+/** 生成一副洗好的共用牌堆（默认 60 张；离线/后端不可达时仅用预设卡兜底） */
 export function freshDeck(): Piece[] {
-  return shuffle([...PRESET_DECK])
+  return buildGameDeck(PRESET_CARDS)
 }

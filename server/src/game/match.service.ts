@@ -7,9 +7,9 @@ import type { WebSocket } from 'ws'
 import { PrismaService } from '../prisma.service.js'
 import { PieceService } from '../piece/piece.service.js'
 import {
-  createMatch, opponent, place, resign, shuffle, skip,
+  createMatch, opponent, place, resign, skip,
 } from './core/engine.js'
-import { PRESET_DECK } from './core/pieces.js'
+import { buildGameDeck } from './core/deck.js'
 import type { MatchResult, MatchState, PlaceEvent, Piece, Side } from './core/types.js'
 import type { Element } from './core/elements.js'
 
@@ -563,17 +563,12 @@ export class MatchService {
     this.push(player.socket, 'game:state', view)
   }
 
-  /** 组牌：预设 51 张（36 单属性 + 15 双属性）+ 工坊上架卡全部混合洗牌入局；上架卡为空即整副预设 */
-  private async buildDeck() {
-    const approved = await this.pieceService.listApproved(500)
-    const workshop = approved.map(p => ({
-      id: p.id,
-      name: p.name,
-      element: p.element as Element,
-      ...(p.element2 ? { element2: p.element2 as Element } : {}),
-      ...(p.imageUrl ? { imageUrl: p.imageUrl } : {}),
-    }))
-    return shuffle([...PRESET_DECK, ...workshop]) as Piece[]
+  /**
+   * 组牌：卡池 = 预设 51 张卡 + 有上架皮肤的工坊卡；四阶段抽 60 张（同名卡分配不同皮肤）。
+   * 详见 core/deck.ts（与客户端 AI/离线局同源）。
+   */
+  private async buildDeck(): Promise<Piece[]> {
+    return buildGameDeck(await this.pieceService.listPlayableCards())
   }
 
   private push(socket: ClientSocket | null, event: string, data: unknown): void {

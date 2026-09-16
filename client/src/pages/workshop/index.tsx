@@ -1,14 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { View, Text, Input, Image, Picker } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import { ELEMENTS, ELEMENT_COLORS, ELEMENT_NAMES_ZH } from '../../core/elements'
 import type { Element } from '../../core/elements'
-import { API_BASE, REPORT_REASONS, fetchApprovedPieces, getJSON, postJSON, reportPiece, uploadImage, withdrawPiece } from '../../services/api'
+import { API_BASE, REPORT_REASONS, fetchApprovedPieces, fetchCardByName, getJSON, postJSON, reportPiece, uploadImage, withdrawPiece } from '../../services/api'
+import type { ApiCardLookup } from '../../services/api'
+import { groupSkinsByCard, toggleElement, elementLabel } from './filter'
 import { ensureLogin } from '../../services/auth'
 import './index.scss'
 
 interface MyPiece {
+  /** 皮肤 id（skinId） */
   id: string
+  /** 所属卡牌 id（同名即同一张卡） */
+  cardId?: string
   name: string
   element: string
   /** 副属性（可选） */
@@ -38,6 +43,16 @@ export default function Workshop () {
   const [approved, setApproved] = useState<MyPiece[]>([])
   const [reportTarget, setReportTarget] = useState<MyPiece | null>(null)
   const [serverDown, setServerDown] = useState(false)
+  /** 属性检索：空 = 全部；1 个 = 单属性；2 个 = 双属性组合（无序，主/副任一命中） */
+  const [elementFilter, setElementFilter] = useState<string[]>([])
+  /** 同名卡命中（同名即同一张卡，属性以卡牌为准） */
+  const [cardHit, setCardHit] = useState<ApiCardLookup | null>(null)
+
+  /** 检索 + 按卡牌聚合（同名即同一张卡） */
+  const mineGroups = useMemo(() => groupSkinsByCard(mine, elementFilter), [mine, elementFilter])
+  const approvedGroups = useMemo(() => groupSkinsByCard(approved, elementFilter), [approved, elementFilter])
+  /** 全量卡牌数（标题展示用，不受检索影响） */
+  const cardCount = (list: MyPiece[]) => new Set(list.map(p => p.cardId ?? `name:${p.name}`)).size
 
   const loadMine = async () => {
     try {
@@ -64,6 +79,32 @@ export default function Workshop () {
       await Promise.all([loadMine(), loadApproved()])
     })()
   }, [])
+
+  // 名称输入防抖查同名卡：命中即提示"同名即同一张卡"并锁定属性为卡牌属性
+  useEffect(() => {
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setCardHit(null)
+      return
+    }
+    let alive = true
+    const timer = setTimeout(() => {
+      fetchCardByName(trimmed)
+        .then(hit => { if (alive) setCardHit(hit) })
+        .catch(() => { if (alive) setCardHit(null) })
+    }, 300)
+    return () => {
+      alive = false
+      clearTimeout(timer)
+    }
+  }, [name])
+
+  // 命中同名卡：属性锁定（属性以卡牌为准，避免提交被拒）
+  useEffect(() => {
+    if (!cardHit) return
+    setElement(cardHit.element as Element)
+    setElement2((cardHit.element2 as Element | null) ?? null)
+  }, [cardHit])
 
   const chooseImage = async () => {
     // 备份当前图片：取消选择/上传失败时恢复，避免原图被清空
@@ -179,6 +220,11 @@ export default function Workshop () {
             placeholder='1~12 个字'
             onInput={e => setName(e.detail.value)}
           />
+          <Text className='form-row__tip'>
+            {cardHit
+              ? `该名称已有卡牌（${elementLabel(cardHit.element, cardHit.element2)}，已上架 ${cardHit.approvedSkinCount} 款皮肤）：同名即同一张卡，本次将作为它的新皮肤提交，属性已锁定`
+              : '同名即同一张卡：提交已存在的名称将作为该卡牌的新皮肤（属性需保持一致）'}
+          </Text>
         </View>
 
         <View className='form-row'>
@@ -187,9 +233,10 @@ export default function Workshop () {
             {ELEMENTS.map(el => (
               <View
                 key={el}
-                className={`el-chip ${element === el ? 'el-chip--on' : ''}`}
+                className={`el-chip ${element === el ? 'el-chip--on' : ''} ${cardHit ? 'el-chip--locked' : ''}`}
                 style={`border-color: ${ELEMENT_COLORS[el]}; ${element === el ? `background:${ELEMENT_COLORS[el]}` : ''}`}
                 onClick={() => {
+                  if (cardHit) return   // 同名卡属性锁定
                   setElement(el)
                   if (element2 === el) setElement2(null)   // 主属性改选时清掉相同副属性
                 }}
@@ -206,17 +253,20 @@ export default function Workshop () {
           <Text className='form-row__label'>副属性（可选）</Text>
           <View className='form-row__elements'>
             <View
-              className={`el-chip el-chip--none ${element2 === null ? 'el-chip--on' : ''}`}
-              onClick={() => setElement2(null)}
+              className={`el-chip el-chip--none ${element2 === null ? 'el-chip--on' : ''} ${cardHit ? 'el-chip--locked' : ''}`}
+              onClick={() => { if (!cardHit) setElement2(null) }}
             >
               <Text>无</Text>
             </View>
             {ELEMENTS.filter(el => el !== element).map(el => (
               <View
                 key={el}
-                className={`el-chip ${element2 === el ? 'el-chip--on' : ''}`}
+                className={`el-chip ${element2 === el ? 'el-chip--on' : ''} ${cardHit ? 'el-chip--locked' : ''}`}
                 style={`border-color: ${ELEMENT_COLORS[el]}; ${element2 === el ? `background:${ELEMENT_COLORS[el]}` : ''}`}
-                onClick={() => setElement2(element2 === el ? null : el)}
+                onClick={() => {
+                  if (cardHit) return   // 同名卡属性锁定
+                  setElement2(element2 === el ? null : el)
+                }}
               >
                 <Text style={element2 === el ? 'color:#fff' : `color:${ELEMENT_COLORS[el]}`}>
                   {ELEMENT_NAMES_ZH[el]}
@@ -248,88 +298,135 @@ export default function Workshop () {
         <Text className='panel__note'>提交后进入待审核队列，审核通过即进入全服公共牌池</Text>
       </View>
 
+      {/* 属性检索：全部 / 单属性 / 双属性组合（主/副任一命中，组合无序） */}
       <View className='panel'>
-        <Text className='panel__title'>我的棋子</Text>
+        <Text className='panel__title'>属性检索</Text>
+        <View className='filter-elements'>
+          <View
+            className={`el-chip el-chip--none ${elementFilter.length === 0 ? 'el-chip--on' : ''}`}
+            onClick={() => setElementFilter([])}
+          >
+            <Text>全部</Text>
+          </View>
+          {ELEMENTS.map(el => (
+            <View
+              key={el}
+              className={`el-chip ${elementFilter.includes(el) ? 'el-chip--on' : ''}`}
+              style={`border-color: ${ELEMENT_COLORS[el]}; ${elementFilter.includes(el) ? `background:${ELEMENT_COLORS[el]}` : ''}`}
+              onClick={() => setElementFilter(toggleElement(elementFilter, el))}
+            >
+              <Text style={elementFilter.includes(el) ? 'color:#fff' : `color:${ELEMENT_COLORS[el]}`}>
+                {ELEMENT_NAMES_ZH[el]}
+              </Text>
+            </View>
+          ))}
+        </View>
+        <Text className='panel__note'>
+          {elementFilter.length === 0
+            ? '当前：全部卡牌'
+            : elementFilter.length === 1
+              ? `当前：含「${elementLabel(elementFilter[0])}」属性的卡牌（主/副任一命中）`
+              : `当前：${elementFilter.map(el => elementLabel(el)).join('+')} 组合（选两个属性查双属性卡，无序匹配）`}
+        </Text>
+      </View>
+
+      <View className='panel'>
+        <Text className='panel__title'>我的棋子（{mine.length} 款皮肤 / {cardCount(mine)} 张卡牌）</Text>
         {mine.length === 0 && <Text className='panel__empty'>还没有作品，去创作第一只吧</Text>}
+        {mine.length > 0 && mineGroups.length === 0 && (
+          <Text className='panel__empty'>没有符合检索条件的棋子</Text>
+        )}
         <View className='mine-list'>
-          {mine.map(p => (
-            <View key={p.id} className='mine-item'>
-              <Image
-                className='mine-item__img'
-                src={`${API_BASE}${p.imageUrl}`}
-                mode='aspectFill'
-              />
-              <View className='mine-item__info'>
-                <Text className='mine-item__name'>{p.name}</Text>
+          {mineGroups.map(g => (
+            <View key={g.key} className='card-group'>
+              <View className='card-group__head'>
+                <Text className='card-group__name'>{g.name}</Text>
                 <View className='mine-item__elements'>
-                  <Text
-                    className='mine-item__element'
-                    style={`background: ${ELEMENT_COLORS[p.element as Element] ?? '#999'}`}
-                  >
-                    {(ELEMENT_NAMES_ZH as Record<string, string>)[p.element] ?? p.element}
-                  </Text>
-                  {p.element2 && (
+                  {[g.element, ...(g.element2 && g.element2 !== g.element ? [g.element2] : [])].map(el => (
                     <Text
+                      key={el}
                       className='mine-item__element'
-                      style={`background: ${ELEMENT_COLORS[p.element2 as Element] ?? '#999'}`}
+                      style={`background: ${ELEMENT_COLORS[el as Element] ?? '#999'}`}
                     >
-                      {(ELEMENT_NAMES_ZH as Record<string, string>)[p.element2] ?? p.element2}
+                      {(ELEMENT_NAMES_ZH as Record<string, string>)[el] ?? el}
                     </Text>
-                  )}
+                  ))}
                 </View>
-                <View className='mine-item__row'>
-                  <Text className={`mine-item__status mine-item__status--${p.status}`}>
-                    {STATUS_TEXT[p.status]}
-                  </Text>
-                  {p.status === 'pending' && (
-                    <View className='mine-item__btn' onClick={() => withdraw(p.id)}>
-                      <Text>撤回</Text>
-                    </View>
-                  )}
-                </View>
-                {p.status === 'rejected' && p.rejectReason && (
-                  <Text className='mine-item__reason'>驳回原因：{p.rejectReason}</Text>
-                )}
+                <Text className='card-group__count'>{g.skins.length} 款皮肤</Text>
               </View>
+              {g.skins.map(p => (
+                <View key={p.id} className='mine-item'>
+                  <Image
+                    className='mine-item__img'
+                    src={`${API_BASE}${p.imageUrl}`}
+                    mode='aspectFill'
+                  />
+                  <View className='mine-item__info'>
+                    <View className='mine-item__row'>
+                      <Text className={`mine-item__status mine-item__status--${p.status}`}>
+                        {STATUS_TEXT[p.status]}
+                      </Text>
+                      {p.status === 'pending' && (
+                        <View className='mine-item__btn' onClick={() => withdraw(p.id)}>
+                          <Text>撤回</Text>
+                        </View>
+                      )}
+                    </View>
+                    {p.status === 'rejected' && p.rejectReason && (
+                      <Text className='mine-item__reason'>驳回原因：{p.rejectReason}</Text>
+                    )}
+                  </View>
+                </View>
+              ))}
             </View>
           ))}
         </View>
       </View>
 
-      {/* 已上架卡牌（全服公共池，可直接查看/举报） */}
+      {/* 已上架皮肤（全服公共池，按卡牌聚合，可直接查看/举报） */}
       <View className='panel'>
-        <Text className='panel__title'>已上架卡牌（{approved.length}）</Text>
+        <Text className='panel__title'>
+          已上架卡牌（{approved.length} 款皮肤 / {cardCount(approved)} 张卡牌）
+        </Text>
         {approved.length === 0 && <Text className='panel__empty'>暂无已上架卡牌</Text>}
+        {approved.length > 0 && approvedGroups.length === 0 && (
+          <Text className='panel__empty'>没有符合检索条件的卡牌</Text>
+        )}
         <View className='mine-list'>
-          {approved.map(p => (
-            <View key={p.id} className='mine-item mine-item--public'>
-              <Image
-                className='mine-item__img'
-                src={`${API_BASE}${p.imageUrl}`}
-                mode='aspectFill'
-              />
-              <View className='mine-item__info'>
-                <Text className='mine-item__name'>{p.name}</Text>
+          {approvedGroups.map(g => (
+            <View key={g.key} className='card-group'>
+              <View className='card-group__head'>
+                <Text className='card-group__name'>{g.name}</Text>
                 <View className='mine-item__elements'>
-                  <Text
-                    className='mine-item__element'
-                    style={`background: ${ELEMENT_COLORS[p.element as Element] ?? '#999'}`}
-                  >
-                    {(ELEMENT_NAMES_ZH as Record<string, string>)[p.element] ?? p.element}
-                  </Text>
-                  {p.element2 && (
+                  {[g.element, ...(g.element2 && g.element2 !== g.element ? [g.element2] : [])].map(el => (
                     <Text
+                      key={el}
                       className='mine-item__element'
-                      style={`background: ${ELEMENT_COLORS[p.element2 as Element] ?? '#999'}`}
+                      style={`background: ${ELEMENT_COLORS[el as Element] ?? '#999'}`}
                     >
-                      {(ELEMENT_NAMES_ZH as Record<string, string>)[p.element2] ?? p.element2}
+                      {(ELEMENT_NAMES_ZH as Record<string, string>)[el] ?? el}
                     </Text>
-                  )}
+                  ))}
                 </View>
+                <Text className='card-group__count'>{g.skins.length} 款皮肤</Text>
               </View>
-              <View className='mine-item__report' onClick={() => setReportTarget(p)}>
-                <Text>举报</Text>
-              </View>
+              {g.skins.map(p => (
+                <View key={p.id} className='mine-item mine-item--public'>
+                  <Image
+                    className='mine-item__img'
+                    src={`${API_BASE}${p.imageUrl}`}
+                    mode='aspectFill'
+                  />
+                  <View className='mine-item__info'>
+                    <View className='mine-item__row'>
+                      <Text className='mine-item__name'>{p.name}</Text>
+                    </View>
+                  </View>
+                  <View className='mine-item__report' onClick={() => setReportTarget(p)}>
+                    <Text>举报</Text>
+                  </View>
+                </View>
+              ))}
             </View>
           ))}
         </View>
