@@ -207,9 +207,13 @@ git archive --format=tar.gz -o att.tar.gz HEAD~1
 **① 更新前先备份数据卷（本次含表结构变更，必做）**
 
 ```bash
-docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
+sudo mkdir -p /opt/backup
+sudo docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
     tar -czf /backup/att-data-before-cardskin-$(date +%F).tar.gz -C /data .
+sudo ls -lh /opt/backup/ | grep cardskin                        # 确认文件非 0 字节
 ```
+
+> 服务器上 docker 命令一律加 `sudo`（ubuntu 用户不在 docker 组）；命令建议整行粘贴，避免 `--rm` 被拆开。
 
 > 原因：容器启动会自动把旧 `Piece` 表迁移为 `Card`/`Skin`，**旧代码读不懂新表**——若之后要回滚代码，必须同时按第六节「数据恢复」还原这份备份。
 
@@ -241,8 +245,8 @@ sudo docker compose -p att logs server | grep -E '卡牌/皮肤数据迁移|归�
 **⑤ 回滚（本次特殊）**：代码回滚需连带还原数据卷：
 
 ```bash
-docker compose -p att down
-docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
+sudo docker compose -p att down
+sudo docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
     sh -c 'rm -rf /data/* && tar -xzf /backup/att-data-before-cardskin-<日期>.tar.gz -C /data'
 # 再用上一提交的包重建
 ```
@@ -250,14 +254,15 @@ docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
 ### 数据备份（建议加 cron）
 
 ```bash
-# 手动备份一次：
-docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
+# 手动备份一次（服务器上 docker 命令必须 sudo：ubuntu 用户不在 docker 组，踩过）：
+sudo mkdir -p /opt/backup
+sudo docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
     tar -czf /backup/att-data-$(date +%F).tar.gz -C /data .
-docker run --rm -v att_server_uploads:/data -v /opt/backup:/backup alpine \
+sudo docker run --rm -v att_server_uploads:/data -v /opt/backup:/backup alpine \
     tar -czf /backup/att-uploads-$(date +%F).tar.gz -C /data .
 
-# 每天凌晨 3 点自动备份：
-(crontab -l 2>/dev/null; echo "0 3 * * * docker run --rm -v att_server_data:/d -v /opt/backup:/b alpine tar -czf /b/att-data-\$(date +\%F).tar.gz -C /d . && docker run --rm -v att_server_uploads:/d -v /opt/backup:/b alpine tar -czf /b/att-uploads-\$(date +\%F).tar.gz -C /d .") | crontab -
+# 每天凌晨 3 点自动备份（加到 root 计划任务：sudo crontab -e）：
+(crontab -l 2>/dev/null; echo "0 3 * * * docker run --rm -v att_server_data:/d -v /opt/backup:/b alpine tar -czf /b/att-data-\$(date +\%F).tar.gz -C /d . && docker run --rm -v att_server_uploads:/d -v /opt/backup:/b alpine tar -czf /b/att-uploads-\$(date +\%F).tar.gz -C /d .") | sudo crontab -
 ```
 
 > 卷名 `att_server_data` / `att_server_uploads` 由部署命令的 `-p att` 决定。换过项目名的话用 `docker volume ls` 确认实际名称。
@@ -265,20 +270,20 @@ docker run --rm -v att_server_uploads:/data -v /opt/backup:/backup alpine \
 ### 数据恢复
 
 ```bash
-docker compose -p att down
-docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
+sudo docker compose -p att down
+sudo docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
     sh -c "rm -rf /data/* && tar -xzf /backup/att-data-2026-XX-XX.tar.gz -C /data"
-docker compose -p att up -d
+sudo docker compose -p att up -d
 ```
 
 ### 常用命令速查
 
 | 目的   | 命令                                                         |
 | ---- | ---------------------------------------------------------- |
-| 看日志  | `docker compose -p att logs -f server` / `... logs -f web` |
-| 重启   | `docker compose -p att restart`                            |
-| 停服   | `docker compose -p att down`（数据保留）                         |
-| 查数据卷 | `docker volume ls`                                         |
+| 看日志  | `sudo docker compose -p att logs -f server` / `... logs -f web` |
+| 重启   | `sudo docker compose -p att restart`                       |
+| 停服   | `sudo docker compose -p att down`（数据保留）                   |
+| 查数据卷 | `sudo docker volume ls`                                    |
 
 ### 运营后台
 
