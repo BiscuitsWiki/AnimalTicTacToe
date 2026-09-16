@@ -198,6 +198,55 @@ git archive --format=tar.gz -o att.tar.gz HEAD~1
 - acceptance 的 WS 匹配测试会在数据库留一条测试战绩（断线超时判负记录）
 - tar.gz 每次覆盖 `/opt/att`，但 `.env` 与数据卷都在包外，不会被动
 
+### 本次更新专项：卡牌/皮肤模型 + 60 张四阶段组牌（2026-09-17）
+
+> 仍按上面 Runbook 第 0~4 步执行，本节只列**本次特有**的检查点与注意事项。
+
+**发布内容**：同名卡牌 = 同一张卡（新增 Card 表；原 Piece 表改为 Skin、PieceReport 改为 SkinReport）、工坊与后台的属性检索 + 按卡聚合展示、对局牌堆改为 60 张四阶段抽取（51 张预设卡 + 有上架皮肤的工坊卡）。
+
+**① 更新前先备份数据卷（本次含表结构变更，必做）**
+
+```bash
+docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
+    tar -czf /backup/att-data-before-cardskin-$(date +%F).tar.gz -C /data .
+```
+
+> 原因：容器启动会自动把旧 `Piece` 表迁移为 `Card`/`Skin`，**旧代码读不懂新表**——若之后要回滚代码，必须同时按第六节「数据恢复」还原这份备份。
+
+**② 数据库无需手工操作**：容器启动命令先跑 `node scripts/migrate-card-skin.mjs`（导出旧表 → `prisma db push` → 按 cardName 归并为卡牌 + 皮肤 → 同名不同属性的皮肤自动驳回），幂等可重复执行，本地已用模拟旧库实测通过。
+
+**③ 第 3 步解压后：新代码标志验证（4 条都应命中）**
+
+```bash
+cd /opt/att
+grep -c migrate-card-skin Dockerfile                      # 期望 1
+ls -l server/scripts/migrate-card-skin.mjs                # 文件存在
+grep -c buildGameDeck server/src/game/match.service.ts     # 期望 ≥1
+grep -c '属性检索' client/src/pages/workshop/index.tsx      # 期望 ≥1
+```
+
+**④ 第 4 步验收：本次新增手动检查项（浏览器 Ctrl+F5 强刷）**
+
+```bash
+# 迁移日志（起容器后 1 分钟内看，期望出现迁移横幅与归并统计）
+sudo docker compose -p att logs server | grep -E '卡牌/皮肤数据迁移|归并完成|属性冲突'
+```
+
+- 后台 `/admin/`：统计卡新增「卡牌总数（预设 51）」（值 = 51 + 工坊已上架卡数）；「上架中」按卡牌聚合（卡头 + N 款皮肤），皮肤仍可单独下架；属性检索栏可选「单属性」「双属性组合」。
+- 迁移日志若出现 `预设卡「X」与原工坊卡属性冲突` 警告：该同名工坊皮肤已被自动驳回（创作者改名/改属性后可重新提交），属预期兜底。
+- 工坊页：出现「属性检索」面板（选「火」= 主/副任一命中；再点第二个属性 = 组合无序匹配）；「已上架卡牌」按卡牌聚合，同名卡的多款皮肤在同一分组内。
+- 工坊提交：输入已存在的卡名 → 应提示「该名称已有卡牌（火/萌）…属性已锁定」，属性 chips 锁定不可改。
+- 对局：匹配/人机开局后牌堆为 60 张（双方各发 3 张后余 54）；同一卡名的重复副本应显示不同皮肤图片（该卡有多款上架皮肤时）。
+
+**⑤ 回滚（本次特殊）**：代码回滚需连带还原数据卷：
+
+```bash
+docker compose -p att down
+docker run --rm -v att_server_data:/data -v /opt/backup:/backup alpine \
+    sh -c 'rm -rf /data/* && tar -xzf /backup/att-data-before-cardskin-<日期>.tar.gz -C /data'
+# 再用上一提交的包重建
+```
+
 ### 数据备份（建议加 cron）
 
 ```bash
