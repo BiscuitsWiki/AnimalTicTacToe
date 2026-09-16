@@ -223,11 +223,13 @@ sudo ls -lh /opt/backup/ | grep cardskin                        # 确认文件�
 
 ```bash
 cd /opt/att
-grep -c migrate-card-skin Dockerfile                      # 期望 1
+grep -c migrate-card-skin server/Dockerfile               # 期望 1
 ls -l server/scripts/migrate-card-skin.mjs                # 文件存在
 grep -c buildGameDeck server/src/game/match.service.ts     # 期望 ≥1
 grep -c '属性检索' client/src/pages/workshop/index.tsx      # 期望 ≥1
 ```
+
+> 注意：Dockerfile 在 `server/` 与 `client/` 子目录，仓库根目录没有 Dockerfile（踩过：写成 `grep Dockerfile` 会报 No such file）。
 
 **④ 第 4 步验收：本次新增手动检查项（浏览器 Ctrl+F5 强刷）**
 
