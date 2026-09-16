@@ -104,8 +104,6 @@ export default function Battle () {
   const [mySide, setMySide] = useState<Side>('red')
   const [oppoName, setOppoName] = useState(mode === 'ai' ? '电脑' : '对手')
   const [connLost, setConnLost] = useState(false)
-  /** pvp 终局标记：占位屏显示"再来一局/返回主菜单"，不自动重新匹配 */
-  const [ended, setEnded] = useState(false)
   /** room 模式：房间状态（坐席/观战人数） */
   const [roomState, setRoomState] = useState<RoomStateView | null>(null)
   /** room 模式：本端坐席角色 */
@@ -741,12 +739,12 @@ export default function Battle () {
     pvpRef.current?.socket.close()
     pvpRef.current = null
     if (mode === 'pvp') {
-      // 先回结束页（点"再来一局"才重新进队列），不自动开局
+      // 再来一局：关闭旧连接后直接进入匹配队列（匹配中界面）
       setWaiting(true)
-      setEnded(true)
       setMatch(null)
       setSelected(null)
-      setLog(['对局结束'])
+      setLog(['对局结束，正在重新匹配…'])
+      startPvpMatch(true)
     } else {
       startAiMatch()
     }
@@ -1002,27 +1000,13 @@ export default function Battle () {
         <Text className='battle__loading-text'>
           {connLost
             ? '服务器连接失败'
-            : ended && mode === 'pvp'
-              ? '对局结束'
-              : mode === 'pvp'
-                ? '匹配中，等待其他玩家…'
-                : '牌堆组建中…'}
+            : mode === 'pvp'
+              ? '匹配中，等待其他玩家…'
+              : '牌堆组建中…'}
         </Text>
         {connLost ? (
           <View className='battle__back' onClick={goBackToMenu}>
             <Text>返回</Text>
-          </View>
-        ) : ended && mode === 'pvp' ? (
-          <View className='battle__room-actions'>
-            <View
-              className='btn btn--draw'
-              onClick={() => { setEnded(false); startPvpMatch(true) }}
-            >
-              <Text>再来一局</Text>
-            </View>
-            <View className='btn btn--skip' onClick={quitToMenu}>
-              <Text>返回主菜单</Text>
-            </View>
           </View>
         ) : mode === 'pvp' ? (
           <View className='battle__back' onClick={cancelMatch}>
@@ -1286,7 +1270,7 @@ export default function Battle () {
 
       {/* 终局遮罩 */}
       {match.result && (
-        <View className='mask' onClick={restart}>
+        <View className='mask'>
           <View className='mask__panel'>
             <Text className='mask__title'>
               {match.result.winner === 'draw'
@@ -1308,10 +1292,10 @@ export default function Battle () {
             </Text>
             <View className='btn btn--restart' onClick={restart}>
               <Text>
-                {mode === 'ai' ? '再来一局' : mode === 'pvp' ? '继续' : '返回房间'}
+                {mode === 'ai' || mode === 'pvp' ? '再来一局' : '返回房间'}
               </Text>
             </View>
-            {mode === 'ai' && (
+            {(mode === 'ai' || mode === 'pvp') && (
               <View
                 className='btn btn--restart battle__menu-btn'
                 onClick={quitToMenu}
