@@ -456,15 +456,18 @@
 
   }
 
-  /* 叠放层数徽章（N/8，满层标红提示不可再叠，未满灰色；避让 12px 阵营边框） */
+  /* 叠放层数徽章（N/8，满层标红提示不可再叠，未满灰色）。
+     徽章挂在格子上（阵营态格子无边框），需自行加上卡牌 12px 阵营边框宽度，
+     才能与卡面左上属性/左下名称/右下最近一手圆点保持同一距内边框距离（12 + 15 = 27）；
+     字号/内边距与卡面属性胶囊（piece__element）一致，避免徽章比属性更大块 */
   &__stack-count {
     position: absolute;
-    top: 15px;
-    right: 15px;
-    padding: 2px 10px;
+    top: 27px;
+    right: 27px;
+    padding: 2px 8px;
     border-radius: 999px;
     background: rgba(122, 117, 108, 0.88);
-    font-size: 20px;
+    font-size: 16px;
     color: #fff;
     z-index: 2;
 
@@ -517,7 +520,9 @@
     border-radius: 999px;
   }
 
-  /* 左下角名称（比属性更小，避让 12px 边框与右下圆点） */
+  /* 左下角名称（避让 12px 边框与右下圆点）。
+     必须收紧行高：继承的 1.6 行高会把字形墨迹顶到框底之上约 3.5px（18.6px 行盒 vs 11.6px 字号），
+     导致名称到内边框的视觉间距比右下圆点更大——收紧后墨迹底边贴合框底，两处观感一致 */
   &__name {
     position: absolute;
     bottom: 15px;
@@ -527,6 +532,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 18px;
+    line-height: 1.1;
     font-weight: bold;
     color: #3a3a3a;
     text-shadow: 0 0 3px #fff, 0 1px 2px rgba(255, 255, 255, 0.9), 0 -1px 2px rgba(255, 255, 255, 0.9);
