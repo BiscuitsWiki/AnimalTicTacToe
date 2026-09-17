@@ -195,7 +195,7 @@ export class GameGateway implements OnModuleInit, OnModuleDestroy {
     const playerId = user?.id ?? String(data?.playerId ?? '').slice(0, 64)
     if (!playerId) return { ok: false, error: 'unauthorized' }
     const roomId = String(data?.roomId ?? '').trim().toUpperCase().slice(0, 8)
-    const res = await this.roomService.startGame(roomId, playerId)
+    const res = await this.roomService.startGame(roomId, playerId, client)
     client.send(JSON.stringify({ event: 'room:started', data: res }))
     return { ok: true }
   }

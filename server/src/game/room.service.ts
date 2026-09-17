@@ -59,7 +59,12 @@ export type RoomResult<T = undefined> =
 interface RoomMember {
   playerId: string
   name: string
-  socket: ClientSocket
+  /**
+   * 该玩家在本房间的全部活跃连接（多标签/多端同时在线都算连通），末位为最新连接。
+   * 单点持有会"饿死"先开的标签：后开连接接管推送后，先开标签点击换边/开始等操作
+   * 服务端已生效却永远收不到 room:state，界面看起来毫无反应（幽灵大厅成因之一）。
+   */
+  sockets: ClientSocket[]
   /** 断线暂离标记（左滑/关闭页面，非主动退出）：席位保留、重连恢复 */
   away: boolean
 }
@@ -131,7 +136,7 @@ export class RoomService implements OnModuleInit {
     const roomId = this.genRoomCode()
     const room: Room = {
       roomId,
-      host: { playerId, name, socket, away: false },
+      host: { playerId, name, sockets: [socket], away: false },
       guest: null,
       swapped: false,
       spectators: [],
@@ -174,7 +179,7 @@ export class RoomService implements OnModuleInit {
 
     // 蓝方坐席空且未开局：入座（房主暂离期间同样可入座，位置仍是房客）
     if (!room.guest && room.phase === 'waiting') {
-      room.guest = { playerId, name, socket, away: false }
+      room.guest = { playerId, name, sockets: [socket], away: false }
       this.playerRoom.set(playerId, roomId)
       this.logger.log(`room ${roomId}: ${name} seated as guest`)
       this.broadcastState(room)
@@ -185,7 +190,7 @@ export class RoomService implements OnModuleInit {
     if (room.spectators.length >= SPECTATOR_LIMIT) {
       return { ok: false, error: 'spectator_full' }
     }
-    room.spectators.push({ playerId, name, socket, away: false })
+    room.spectators.push({ playerId, name, sockets: [socket], away: false })
     this.playerRoom.set(playerId, roomId)
     this.logger.log(`room ${roomId}: ${name} joined as spectator`)
     this.broadcastState(room)
@@ -201,8 +206,11 @@ export class RoomService implements OnModuleInit {
     return { ok: true, data: { role: 'spectator', room: this.viewOf(room) } }
   }
 
-  /** 开始对局：仅房主可发起，蓝方坐席须已入座，未在对局中；红蓝坐席按 swapped 映射。 */
-  async startGame(roomId: string, playerId: string): Promise<RoomResult> {
+  /**
+   * 开始对局：仅房主可发起，蓝方坐席须已入座，未在对局中；红蓝坐席按 swapped 映射。
+   * requester 为发起连接：同一玩家多标签时，对局绑定到"点开始的那条连接"，避免棋盘开在别的标签。
+   */
+  async startGame(roomId: string, playerId: string, requester?: ClientSocket): Promise<RoomResult> {
     const room = this.rooms.get(roomId)
     if (!room) return { ok: false, error: 'room_not_found' }
     if (room.host.playerId !== playerId) return { ok: false, error: 'not_host' }
@@ -211,9 +219,12 @@ export class RoomService implements OnModuleInit {
 
     const red = room.swapped ? room.guest : room.host
     const blue = room.swapped ? room.host : room.guest
+    /** 坐席对局绑定连接：优先发起连接（多标签时以操作方为准），否则取最新连接 */
+    const bindSocket = (m: RoomMember) =>
+      requester && m.sockets.includes(requester) ? requester : this.primary(m)
     const matchId = await this.matchService.startDirectMatch(
-      { playerId: red.playerId, name: red.name, socket: red.socket },
-      { playerId: blue.playerId, name: blue.name, socket: blue.socket },
+      { playerId: red.playerId, name: red.name, socket: bindSocket(red) },
+      { playerId: blue.playerId, name: blue.name, socket: bindSocket(blue) },
     )
     room.phase = 'playing'
     room.matchId = matchId
@@ -223,10 +234,10 @@ export class RoomService implements OnModuleInit {
     if (room.spectators.length > 0) {
       this.matchService.attachSpectators(
         matchId,
-        room.spectators.map(s => ({ playerId: s.playerId, name: s.name, socket: s.socket })),
+        room.spectators.map(s => ({ playerId: s.playerId, name: s.name, socket: this.primary(s) })),
       )
       for (const s of room.spectators) {
-        this.push(s.socket, 'match:started', {
+        this.pushMember(s, 'match:started', {
           youAre: 'spectator',
           redName: red.name,
           blueName: blue.name,
@@ -276,26 +287,21 @@ export class RoomService implements OnModuleInit {
    */
   leaveRoom(socket: ClientSocket, playerId?: string): void {
     let room = this.roomOfSocket(socket)
-    let member: 'host' | 'guest' | 'spectator' | null = null
-    if (room) {
-      if (room.host.socket === socket) member = 'host'
-      else if (room.guest?.socket === socket) member = 'guest'
-      else if (room.spectators.some(s => s.socket === socket)) member = 'spectator'
-    }
+    let member: RoomMember | null = room ? this.memberOfSocket(room, socket)?.member ?? null : null
     // socket 未命中但携带身份：按 playerId 兜底（重连后 socket 引用与房间记录不一致的场景）
-    if (!room && playerId) {
+    if (!member && playerId) {
       const rid = this.playerRoom.get(playerId)
       const r = rid ? this.rooms.get(rid) : undefined
-      if (r) {
-        if (r.host.playerId === playerId) { room = r; member = 'host' }
-        else if (r.guest?.playerId === playerId) { room = r; member = 'guest' }
-        else if (r.spectators.some(s => s.playerId === playerId)) { room = r; member = 'spectator' }
+      const m = r ? this.memberOf(r, playerId) : null
+      if (r && m) {
+        room = r
+        member = m
       }
     }
     if (!room || !member) return
     this.refreshTtl(room)
 
-    if (member === 'host') {
+    if (member === room.host) {
       if (room.guest) {
         this.transferOnHostGone(room)
         return
@@ -304,16 +310,16 @@ export class RoomService implements OnModuleInit {
       return
     }
 
-    if (member === 'guest' && room.guest) {
-      this.playerRoom.delete(room.guest.playerId)
+    if (member === room.guest) {
+      this.playerRoom.delete(member.playerId)
       room.guest = null
       this.broadcastState(room)
       return
     }
 
-    const idx = room.spectators.findIndex(s => (playerId ? s.playerId === playerId : s.socket === socket))
+    const idx = room.spectators.indexOf(member)
     if (idx >= 0) {
-      this.playerRoom.delete(room.spectators[idx].playerId)
+      this.playerRoom.delete(member.playerId)
       room.spectators.splice(idx, 1)
       this.broadcastState(room)
     }
@@ -321,6 +327,7 @@ export class RoomService implements OnModuleInit {
 
   /**
    * 连接断开（左滑/关闭网页 = 暂离，非主动退出）。
+   * 同一玩家还有其它活跃连接（多标签/多端）时不改席位：该玩家并未离线。
    * 对局中（playing）：坐席玩家保留席位（重连 rebindSocket/rejoinRoom 恢复；宽限判负由 MatchService 处理）。
    * 等待期（waiting）：房主有坐席玩家 → 立即转让所有权；无 → 房间保留 3 分钟（房主席位灰显，期间他人入座仍是房客）。
    * 房客等待期断线 → 立即清空坐席；观战者断线 → 立即移出观战席。
@@ -328,11 +335,16 @@ export class RoomService implements OnModuleInit {
   handleDisconnect(socket: ClientSocket): void {
     const room = this.roomOfSocket(socket)
     if (!room) return
-    if (room.host.socket === socket) return this.disconnectHost(room)
-    if (room.guest?.socket === socket) return this.disconnectGuest(room)
-    const idx = room.spectators.findIndex(s => s.socket === socket)
+    const found = this.memberOfSocket(room, socket)
+    if (!found) return
+    if (this.detach(found.member, socket)) return   // 该玩家还有其它活跃连接：不算暂离
+
+    if (found.seat === 'host') return this.disconnectHost(room)
+    if (found.seat === 'guest') return this.disconnectGuest(room)
+
+    const idx = room.spectators.indexOf(found.member)
     if (idx >= 0) {
-      this.playerRoom.delete(room.spectators[idx].playerId)
+      this.playerRoom.delete(found.member.playerId)
       room.spectators.splice(idx, 1)
       this.broadcastState(room)
     }
@@ -406,21 +418,20 @@ export class RoomService implements OnModuleInit {
     this.clearHostAwayTimer(room)
   }
 
-  /** 对局断线重连后：房间成员 socket 重绑（大厅广播可达），暂离标记一并恢复 */
+  /** 对局断线重连后：房间成员连接绑定（大厅广播可达），暂离标记一并恢复 */
   rebindSocket(playerId: string, socket: ClientSocket): void {
     const roomId = this.playerRoom.get(playerId)
     if (!roomId) return
     const room = this.rooms.get(roomId)
     if (!room) return
     if (room.host.playerId === playerId) {
-      room.host.socket = socket
+      this.attach(room.host, socket)
       this.markHostBack(room)
     } else if (room.guest?.playerId === playerId) {
-      room.guest.socket = socket
-      room.guest.away = false
+      this.attach(room.guest, socket)
     } else {
       const s = room.spectators.find(x => x.playerId === playerId)
-      if (s) s.socket = socket
+      if (s) this.attach(s, socket)
     }
   }
 
@@ -434,11 +445,10 @@ export class RoomService implements OnModuleInit {
     if (room.host.playerId === playerId || room.guest?.playerId === playerId) {
       const isHost = room.host.playerId === playerId
       if (isHost) {
-        room.host.socket = socket
+        this.attach(room.host, socket)   // 最新连接置末位（对局绑定优先），旧连接保留（多标签均可见）
         this.markHostBack(room)   // 暂离恢复：清标记与暂离计时
       } else {
-        room.guest!.socket = socket
-        room.guest!.away = false
+        this.attach(room.guest!, socket)
       }
       this.logger.log(`room ${room.roomId}: ${isHost ? 'host' : 'guest'} rejoined`)
       this.broadcastState(room)
@@ -452,7 +462,7 @@ export class RoomService implements OnModuleInit {
     // 观战者重进
     const spec = room.spectators.find(x => x.playerId === playerId)
     if (spec) {
-      spec.socket = socket
+      this.attach(spec, socket)
       this.logger.log(`room ${room.roomId}: spectator ${spec.name} rejoined`)
       this.broadcastState(room)
       if (room.phase === 'playing' && room.matchId) {
@@ -548,28 +558,65 @@ export class RoomService implements OnModuleInit {
     }
   }
 
-  /** 房间状态广播：房主/坐席/观战全员 */
+  /** 房间状态广播：房主/坐席/观战全员（同一玩家的每条连接都推，避免多标签下旧标签界面冻结） */
   private broadcastState(room: Room): void {
     const view = this.viewOf(room)
-    const targets: Array<{ socket: ClientSocket }> = [
+    const targets: RoomMember[] = [
       room.host,
       ...(room.guest ? [room.guest] : []),
       ...room.spectators,
     ]
-    for (const t of targets) this.push(t.socket, 'room:state', view)
+    for (const m of targets) this.pushMember(m, 'room:state', view)
   }
 
   private roomOfSocket(socket: ClientSocket): Room | undefined {
     for (const room of this.rooms.values()) {
-      if (
-        room.host.socket === socket ||
-        room.guest?.socket === socket ||
-        room.spectators.some(s => s.socket === socket)
-      ) {
-        return room
-      }
+      if (this.memberOfSocket(room, socket)) return room
     }
     return undefined
+  }
+
+  /** 按连接定位成员及其坐席位置 */
+  private memberOfSocket(
+    room: Room,
+    socket: ClientSocket,
+  ): { member: RoomMember; seat: 'host' | 'guest' | 'spectator' } | null {
+    if (room.host.sockets.includes(socket)) return { member: room.host, seat: 'host' }
+    if (room.guest && room.guest.sockets.includes(socket)) return { member: room.guest, seat: 'guest' }
+    const spec = room.spectators.find(s => s.sockets.includes(socket))
+    return spec ? { member: spec, seat: 'spectator' } : null
+  }
+
+  /** 按 playerId 定位成员（房主/坐席/观战任一） */
+  private memberOf(room: Room, playerId: string): RoomMember | null {
+    if (room.host.playerId === playerId) return room.host
+    if (room.guest?.playerId === playerId) return room.guest
+    return room.spectators.find(s => s.playerId === playerId) ?? null
+  }
+
+  /** 绑定连接：同一连接不重复占位，最新连接置末位 */
+  private attach(member: RoomMember, socket: ClientSocket): void {
+    const i = member.sockets.indexOf(socket)
+    if (i >= 0) member.sockets.splice(i, 1)
+    member.sockets.push(socket)
+    member.away = false
+  }
+
+  /** 解绑连接：返回该成员是否仍有其它活跃连接 */
+  private detach(member: RoomMember, socket: ClientSocket): boolean {
+    const i = member.sockets.indexOf(socket)
+    if (i >= 0) member.sockets.splice(i, 1)
+    return member.sockets.length > 0
+  }
+
+  /** 成员最新连接（对局绑定/单点推送优先用） */
+  private primary(member: RoomMember): ClientSocket {
+    return member.sockets[member.sockets.length - 1]
+  }
+
+  /** 成员全部连接推送 */
+  private pushMember(member: RoomMember, event: string, data: unknown): void {
+    for (const s of member.sockets) this.push(s, event, data)
   }
 
   /** TTL 活动刷新：清旧定时器重新计时 */
@@ -599,7 +646,7 @@ export class RoomService implements OnModuleInit {
     const members = [room.host, ...(room.guest ? [room.guest] : []), ...room.spectators]
     for (const m of members) {
       this.playerRoom.delete(m.playerId)
-      this.push(m.socket, 'room:closed', { reason })
+      this.pushMember(m, 'room:closed', { reason })
     }
     this.logger.log(`room ${roomId} disposed (${reason})`)
   }

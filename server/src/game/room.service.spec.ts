@@ -26,8 +26,8 @@ class FakeSocket {
 function fakeMatchService() {
   const inMatch = new Set<string>()
   const started: Array<{
-    red: { playerId: string; name: string }
-    blue: { playerId: string; name: string }
+    red: { playerId: string; name: string; socket: unknown }
+    blue: { playerId: string; name: string; socket: unknown }
   }> = []
   const attached: Array<{ matchId: string; count: number }> = []
   const endedCallbacks: Array<(matchId: string) => void> = []
@@ -255,6 +255,54 @@ describe('RoomService（坐席制）', () => {
     state = hostSock.last('room:state') as { redName: string; blueName: string | null }
     expect(state.redName).toBe('小明')
     expect(state.blueName).toBe('客人')
+  })
+
+  it('同一玩家多标签在线：新标签重进不饿死旧标签，换边时两条连接都收到 room:state', async () => {
+    const { res, sock: hostTab1 } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+
+    // 房主在第二个标签重进（同一身份的新连接）
+    const hostTab2 = new FakeSocket()
+    expect((await service.joinRoom(roomId, 'p1', '小明', hostTab2 as never)).ok).toBe(true)
+
+    const before = hostTab1.sent.filter(m => m.event === 'room:state').length
+    expect(service.swapSeats(roomId, 'p1').ok).toBe(true)
+    // 旧标签（先开的连接）必须同样收到换边后的房间状态，否则界面看起来"换边无效"
+    expect(hostTab1.sent.filter(m => m.event === 'room:state').length).toBeGreaterThan(before)
+    expect((hostTab1.last('room:state') as { redName: string }).redName).toBe('客人')
+    expect((hostTab2.last('room:state') as { redName: string }).redName).toBe('客人')
+  })
+
+  it('同一玩家多标签在线：关闭单条连接不算暂离，全部断开才进入暂离', async () => {
+    const { res, sock: hostTab1 } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    const { sock: guestSock } = await seatGuest(roomId)
+
+    const hostTab2 = new FakeSocket()
+    await service.joinRoom(roomId, 'p1', '小明', hostTab2 as never)
+
+    service.handleDisconnect(hostTab1 as never)   // 关掉旧标签：仍有新标签在线
+    expect((guestSock.last('room:state') as { redAway: boolean }).redAway).toBe(false)
+    expect(service.isPlayerInRoom('p1')).toBe(true)
+
+    service.handleDisconnect(hostTab2 as never)   // 全部断开 → 进入暂离宽限
+    expect((guestSock.last('room:state') as { redAway: boolean }).redAway).toBe(true)
+  })
+
+  it('多标签开局：对局绑定发起连接（点"开始对局"的那个标签）', async () => {
+    const { res, sock: hostTab1 } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    await seatGuest(roomId)
+
+    const hostTab2 = new FakeSocket()
+    await service.joinRoom(roomId, 'p1', '小明', hostTab2 as never)   // 后开标签成为最新连接
+
+    expect((await service.startGame(roomId, 'p1', hostTab1 as never)).ok).toBe(true)
+    expect(match.started[0].red.socket).toBe(hostTab1)   // 棋盘开在发起操作的标签
   })
 
   it('换边后开局：挑战者执红先行（房主选后手）', async () => {
