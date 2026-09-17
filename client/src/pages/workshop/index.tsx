@@ -274,7 +274,7 @@ export default function Workshop () {
               </View>
             ))}
           </View>
-          <Text className='form-row__tip'>双属性判定：进攻择优、防守连乘（克制 2x / 抵抗 0.5x）</Text>
+          <Text className='form-row__tip'>双属性判定：进攻择优、防守连乘（克制 2x / 抵抗 0.5x，属性关系对齐官方表）</Text>
         </View>
 
         <View className='form-row'>

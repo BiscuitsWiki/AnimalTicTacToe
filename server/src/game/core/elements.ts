@@ -2,7 +2,10 @@
  * 洛克王国 18 属性体系。
  * 从 client/src/core/elements.ts 同步拷贝（服务端权威裁决）。
  * 属性名与克制关系参照《洛克王国：世界》18 派系（玩法规则不受版权保护），棋子形象与命名全部自创。
- * 倍率体系：克制 = 2x；抵抗 = 0.5x（A 克 B 时，B 攻击 A 被减半抵抗）；
+ * 倍率体系（2026-09-17 对齐官方《洛克王国：世界》系别表，数据来源：BWiki 系别关系模块）：
+ * 克制 2x 与抵抗 0.5x 是两张**独立**的表——官方抵抗表并非克制表的镜像推导，
+ * 含非镜像抵抗（如 萌攻火、幽攻普、龙攻火）与同属性互抗（冰/电/毒/恶/机械/幻 攻自身 0.5x）；
+ * 同属性：冰/电/毒/恶/机械/幻 互抗 0.5x，龙/幽 自身互克 2x（克制优先），其余 1x。
  * 互克对（龙/龙、幽/幽、光↔幽、冰↔地、恶↔萌）双向均按 2x（克制优先于抵抗）；其余 1x。
  * 棋子支持双属性（主 + 可选副）：进攻方从双属性中择优，防守方双属性连乘（见 captureMultiplier）。
  */
@@ -34,13 +37,13 @@ export const ELEMENT_COLORS: Record<Element, string> = {
 }
 
 /**
- * 克制表：CHART[攻击方][防守方] -> 2（克制），未列出 = 无克制关系。
+ * 克制表（官方「克制」列表）：CHART[攻击方][防守方] -> 2（克制），未列出 = 无克制关系。
+ * 克制的 2x 关系与官方表逐格一致（已用全表快照单测守护）。
  * 对照《洛克王国：世界》18 派系克制关系：
  * 火克草/冰/虫/机械；水克火/地/机械；草克水/光/地；电克水/翼；冰克草/地/龙/翼；
  * 毒克草/萌；虫克草/恶/幻；龙克龙；恶克毒/萌/幽；幽克光/幽/幻；普通不克制任何属性；
  * 武克普通/地/冰/恶/机械；地克火/冰/电/毒；翼克草/虫/武；幻克毒/武；光克幽/恶；
  * 机械克地/冰/萌；萌克龙/武/恶。
- * 抵抗关系由克制表镜像推导：A 克 B ⟹ B 攻击 A 为 0.5x（见 effectiveness）。
  */
 const CHART: Record<Element, Partial<Record<Element, number>>> = {
   fire:     { grass: 2, ice: 2, bug: 2, machine: 2 },
@@ -64,14 +67,40 @@ const CHART: Record<Element, Partial<Record<Element, number>>> = {
 }
 
 /**
- * 单属性对单属性的进攻倍率：
- * - 攻击方克防守方 → 2（互克对双向均为 2，克制优先于抵抗）
- * - 防守方克攻击方 → 0.5（进攻被抵抗，受击减半）
+ * 抵抗表（官方「被抵抗」列表）：RESIST[攻击方][防守方] = 0.5（进攻被抵抗，受击减半）。
+ * 与克制表独立——官方表中存在不互克的抵抗（如 萌攻火、幽攻普、龙攻机械、翼攻地）。
+ * 同属性互抗只出现在 冰/电/毒/恶/机械/幻（表内自身项），龙/幽 走克制表的自身 2x。
+ */
+const RESIST: Record<Element, Partial<Record<Element, number>>> = {
+  normal:   { earth: 0.5, ghost: 0.5, machine: 0.5 },
+  grass:    { machine: 0.5, poison: 0.5, fire: 0.5, wing: 0.5, bug: 0.5, dragon: 0.5 },
+  fire:     { earth: 0.5, water: 0.5, dragon: 0.5 },
+  water:    { ice: 0.5, grass: 0.5, dragon: 0.5 },
+  light:    { ice: 0.5, grass: 0.5 },
+  earth:    { martial: 0.5, grass: 0.5 },
+  ice:      { ice: 0.5, machine: 0.5, fire: 0.5 },
+  dragon:   { machine: 0.5 },
+  electric: { earth: 0.5, electric: 0.5, grass: 0.5, dragon: 0.5 },
+  poison:   { earth: 0.5, ghost: 0.5, machine: 0.5, poison: 0.5 },
+  bug:      { ghost: 0.5, machine: 0.5, martial: 0.5, poison: 0.5, fire: 0.5, wing: 0.5, cute: 0.5 },
+  martial:  { illusion: 0.5, ghost: 0.5, poison: 0.5, wing: 0.5, cute: 0.5, bug: 0.5 },
+  wing:     { earth: 0.5, machine: 0.5, electric: 0.5, dragon: 0.5 },
+  cute:     { machine: 0.5, poison: 0.5, fire: 0.5 },
+  ghost:    { dark: 0.5, normal: 0.5 },
+  dark:     { light: 0.5, dark: 0.5, martial: 0.5 },
+  machine:  { machine: 0.5, water: 0.5, fire: 0.5, electric: 0.5 },
+  illusion: { light: 0.5, illusion: 0.5, machine: 0.5 },
+}
+
+/**
+ * 单属性对单属性的进攻倍率（与官方系别表逐格一致）：
+ * - 攻击方克防守方 → 2（含龙/幽自身互克；克制优先于同格的抵抗判定）
+ * - 攻击方被防守方抵抗 → 0.5（官方抵抗表，含冰/电/毒/恶/机械/幻 的同属性互抗）
  * - 其余 → 1
  */
 export function effectiveness(atk: Element, def: Element): number {
   if (CHART[atk][def] === 2) return 2
-  if (CHART[def][atk] === 2) return 0.5
+  if (RESIST[atk][def] === 0.5) return 0.5
   return 1
 }
 
@@ -92,8 +121,9 @@ function elementsOf(p: ElementProfile): Element[] {
 /**
  * 双属性进攻倍率（叠放占领判定基础）：
  * 进攻方从主/副属性中选择进攻优势更大的一者，对防守方两个属性分别计算倍率后连乘。
- * 例：翼+水 攻 火+草 → 翼 1×2=2，水 2×0.5=1 → 取 2（翼更优）。
- * 倍率 > 1 即克制，≤ 1（含抵抗抵消、双向抵抗）不属于克制。
+ * 例：翼+水 攻 火+草 → 翼 1×2=2，水 2×0.5=1 → 取 2（翼更优）可占领。
+ * 例：火+水 攻 火+草 → 火 1×2=2（火攻火官方为中性），水 2×0.5=1 → 取 2 可占领。
+ * 倍率 > 1 即克制，≤ 1（含抵抗抵消、同属性互抗、双向抵抗）不属于克制。
  */
 export function captureMultiplier(atk: ElementProfile, def: ElementProfile): number {
   const defEls = elementsOf(def)

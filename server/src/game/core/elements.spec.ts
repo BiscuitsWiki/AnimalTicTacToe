@@ -35,8 +35,47 @@ describe('属性克制与抵抗（服务端权威副本）', () => {
     expect(effectiveness('grass', 'fire')).toBe(0.5); // 火克草 → 草攻火被抵抗
     expect(effectiveness('ice', 'earth')).toBe(2);
     expect(effectiveness('earth', 'ice')).toBe(2);
-    expect(effectiveness('dragon', 'dragon')).toBe(2); // 龙克龙（自身）
+    expect(effectiveness('dragon', 'dragon')).toBe(2); // 龙克龙（自身互克）
+    expect(effectiveness('ghost', 'ghost')).toBe(2); // 幽克幽（自身互克）
+    expect(effectiveness('ice', 'ice')).toBe(0.5); // 官方同属性互抗：冰
+    expect(effectiveness('machine', 'machine')).toBe(0.5); // 官方同属性互抗：机械
+    expect(effectiveness('fire', 'fire')).toBe(1); // 官方火攻火中性（非互抗）
+    expect(effectiveness('normal', 'normal')).toBe(1); // 普通同属性中性
     expect(effectiveness('normal', 'fire')).toBe(1); // 普通不克任何属性
+  });
+
+  it('官方系别表快照（BWiki 数据）：18×18 全表倍率逐格一致', () => {
+    // [克制 2x 列表, 被抵抗 0.5x 列表]；与 core/elements.ts 的 CHART / RESIST 对拍（防单侧漂移）
+    const OFF: Record<string, [string[], string[]]> = {
+      normal: [[], ['earth', 'ghost', 'machine']],
+      grass: [['light', 'earth', 'water'], ['machine', 'poison', 'fire', 'wing', 'bug', 'dragon']],
+      fire: [['ice', 'machine', 'grass', 'bug'], ['earth', 'water', 'dragon']],
+      water: [['earth', 'machine', 'fire'], ['ice', 'grass', 'dragon']],
+      light: [['ghost', 'dark'], ['ice', 'grass']],
+      earth: [['ice', 'poison', 'fire', 'electric'], ['martial', 'grass']],
+      ice: [['earth', 'wing', 'grass', 'dragon'], ['ice', 'machine', 'fire']],
+      dragon: [['dragon'], ['machine']],
+      electric: [['water', 'wing'], ['earth', 'electric', 'grass', 'dragon']],
+      poison: [['grass', 'cute'], ['earth', 'ghost', 'machine', 'poison']],
+      bug: [['illusion', 'dark', 'grass'], ['ghost', 'machine', 'martial', 'poison', 'fire', 'wing', 'cute']],
+      martial: [['ice', 'earth', 'dark', 'normal', 'machine'], ['illusion', 'ghost', 'poison', 'wing', 'cute', 'bug']],
+      wing: [['martial', 'grass', 'bug'], ['earth', 'machine', 'electric', 'dragon']],
+      cute: [['dark', 'martial', 'dragon'], ['machine', 'poison', 'fire']],
+      ghost: [['light', 'illusion', 'ghost'], ['dark', 'normal']],
+      dark: [['ghost', 'poison', 'cute'], ['light', 'dark', 'martial']],
+      machine: [['ice', 'earth', 'cute'], ['machine', 'water', 'fire', 'electric']],
+      illusion: [['martial', 'poison'], ['light', 'illusion', 'machine']],
+    };
+    const bad: string[] = [];
+    for (const a of ELEMENTS) {
+      for (const d of ELEMENTS) {
+        const [beat, resist] = OFF[a];
+        const want = beat.includes(d) ? 2 : resist.includes(d) ? 0.5 : 1;
+        const got = effectiveness(a, d);
+        if (got !== want) bad.push(`${a}攻${d} 官方${want}/实现${got}`);
+      }
+    }
+    expect(bad).toEqual([]);
   });
 
   it('克制表健全性：互克仅限 光↔幽、冰↔地、恶↔萌（龙/幽自身不算互克对）', () => {
@@ -82,6 +121,13 @@ describe('双属性判定（服务端权威副本）', () => {
 
   it('单属性攻双属性：水 攻 火+草 → 2×0.5=1 不可占领', () => {
     expect(canCapture(P('a', 'water'), P('d', 'fire', 'grass'))).toBe(false);
+  });
+
+  it('官方同属性中性：火+水 攻 火+草 → 火 1×2=2、水 2×0.5=1 → 取 2 可占领', () => {
+    const def = P('d', 'fire', 'grass');
+    expect(captureMultiplier(P('a', 'fire', 'water'), def)).toBe(2); // 火攻火中性，火打草仍 2x
+    expect(canCapture(P('a', 'fire', 'water'), def)).toBe(true);
+    expect(canCapture(P('a', 'fire', 'wing'), def)).toBe(true); // 火+翼：翼 1×2=2 仍可占领
   });
 
   it('防守方双弱点 4x / 双向抵抗 0.25 / 择优后仍 1', () => {

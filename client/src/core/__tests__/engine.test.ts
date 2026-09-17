@@ -54,15 +54,67 @@ describe('属性克制表（洛克王国 18 属性）', () => {
     expect(effectiveness('martial', 'normal')).toBe(2)   // 武克普通
     expect(effectiveness('machine', 'earth')).toBe(2)    // 机械克地
     expect(effectiveness('normal', 'fire')).toBe(1)      // 普通不克任何属性
-    expect(effectiveness('fire', 'fire')).toBe(1)        // 同属性不克制
+    expect(effectiveness('fire', 'fire')).toBe(1)        // 官方：同属性中性（火攻火 1x）
   })
 
-  it('抵抗（受击减半）：被克一方反击为 0.5', () => {
+  it('官方系别表快照（BWiki 数据）：18×18 全表倍率逐格一致', () => {
+    // [克制 2x 列表, 被抵抗 0.5x 列表]；与 core/elements.ts 的 CHART / RESIST 对拍（防单边漂移）
+    const OFF: Record<string, [string[], string[]]> = {
+      normal: [[], ['earth', 'ghost', 'machine']],
+      grass: [['light', 'earth', 'water'], ['machine', 'poison', 'fire', 'wing', 'bug', 'dragon']],
+      fire: [['ice', 'machine', 'grass', 'bug'], ['earth', 'water', 'dragon']],
+      water: [['earth', 'machine', 'fire'], ['ice', 'grass', 'dragon']],
+      light: [['ghost', 'dark'], ['ice', 'grass']],
+      earth: [['ice', 'poison', 'fire', 'electric'], ['martial', 'grass']],
+      ice: [['earth', 'wing', 'grass', 'dragon'], ['ice', 'machine', 'fire']],
+      dragon: [['dragon'], ['machine']],
+      electric: [['water', 'wing'], ['earth', 'electric', 'grass', 'dragon']],
+      poison: [['grass', 'cute'], ['earth', 'ghost', 'machine', 'poison']],
+      bug: [['illusion', 'dark', 'grass'], ['ghost', 'machine', 'martial', 'poison', 'fire', 'wing', 'cute']],
+      martial: [['ice', 'earth', 'dark', 'normal', 'machine'], ['illusion', 'ghost', 'poison', 'wing', 'cute', 'bug']],
+      wing: [['martial', 'grass', 'bug'], ['earth', 'machine', 'electric', 'dragon']],
+      cute: [['dark', 'martial', 'dragon'], ['machine', 'poison', 'fire']],
+      ghost: [['light', 'illusion', 'ghost'], ['dark', 'normal']],
+      dark: [['ghost', 'poison', 'cute'], ['light', 'dark', 'martial']],
+      machine: [['ice', 'earth', 'cute'], ['machine', 'water', 'fire', 'electric']],
+      illusion: [['martial', 'poison'], ['light', 'illusion', 'machine']],
+    }
+    const bad: string[] = []
+    for (const a of ELEMENTS) {
+      for (const d of ELEMENTS) {
+        const [beat, resist] = OFF[a]
+        const want = beat.includes(d) ? 2 : resist.includes(d) ? 0.5 : 1
+        const got = effectiveness(a, d)
+        if (got !== want) bad.push(`${a}攻${d} 官方${want}/实现${got}`)
+      }
+    }
+    expect(bad).toEqual([])
+  })
+
+  it('同属性互抗仅 6 属性（官方表）：冰/电/毒/恶/机械/幻 0.5；龙/幽 自身互克 2；其余中性 1', () => {
+    for (const el of ['ice', 'electric', 'poison', 'dark', 'machine', 'illusion'] as const) {
+      expect(effectiveness(el, el), el).toBe(0.5)
+      expect(canCapture({ element: el }, { element: el }), el).toBe(false)
+    }
+    expect(effectiveness('dragon', 'dragon')).toBe(2)    // 龙克龙（克制优先于抵抗）
+    expect(effectiveness('ghost', 'ghost')).toBe(2)      // 幽克幽（自身互克）
+    expect(canCapture({ element: 'dragon' }, { element: 'dragon' })).toBe(true)
+    for (const el of ['normal', 'grass', 'fire', 'water', 'light', 'earth', 'bug', 'martial', 'wing', 'cute'] as const) {
+      expect(effectiveness(el, el), el).toBe(1)
+    }
+  })
+
+  it('抵抗（受击减半）：被抵抗方反击为 0.5（含官方非镜像抵抗）', () => {
     expect(effectiveness('water', 'grass')).toBe(0.5)    // 草克水 → 水攻草被抵抗
     expect(effectiveness('fire', 'water')).toBe(0.5)     // 水克火 → 火攻水被抵抗
-    expect(effectiveness('grass', 'fire')).toBe(0.5)     // 火克草 → 草攻火被抵抗
-    expect(effectiveness('normal', 'martial')).toBe(0.5) // 武克普通 → 普通攻武被抵抗
+    expect(effectiveness('grass', 'fire')).toBe(0.5)     // 草攻火被抵抗（官方草被抵抗含火）
+    expect(effectiveness('normal', 'martial')).toBe(1)   // 官方普通被抵抗仅 地/幽/机械，武不在列
     expect(effectiveness('normal', 'fire')).toBe(1)      // 无克制关系 → 中性 1x
+    expect(effectiveness('cute', 'fire')).toBe(0.5)      // 非镜像抵抗：萌攻火被抵抗（火不克萌）
+    expect(effectiveness('ghost', 'normal')).toBe(0.5)   // 非镜像抵抗：幽攻普被抵抗
+    expect(effectiveness('dragon', 'fire')).toBe(1)      // 官方龙被抵抗仅 机械（龙攻火不抵抗）
+    expect(effectiveness('dragon', 'machine')).toBe(0.5) // 非镜像抵抗：龙攻机械被抵抗（机械不克龙）
+    expect(effectiveness('wing', 'earth')).toBe(0.5)     // 非镜像抵抗：翼攻地被抵抗（地不克翼）
   })
 
   it('互克对双向均为 2（克制优先于抵抗）', () => {
@@ -156,6 +208,13 @@ describe('双属性判定（进攻择优 × 防守连乘）', () => {
     expect(captureMultiplier(P('a', 'wing'), def)).toBe(2)   // 翼单属性仍克草
   })
 
+  it('官方同属性中性：火+水 攻 火+草 → 火 1×2=2、水 2×0.5=1 → 取 2 可占领', () => {
+    const def = P('def', 'fire', 'grass')
+    expect(captureMultiplier(P('a', 'fire', 'water'), def)).toBe(2)   // 火攻火中性，火打草仍 2x
+    expect(canCapture(P('a', 'fire', 'water'), def)).toBe(true)
+    expect(canCapture(P('a', 'fire', 'wing'), def)).toBe(true)        // 火+翼：翼 1×2=2 仍可占领
+  })
+
   it('防守方双弱点连乘：火 攻 草+虫 → 2×2=4', () => {
     expect(captureMultiplier(P('a', 'fire'), P('d', 'grass', 'bug'))).toBe(4)
   })
@@ -164,8 +223,8 @@ describe('双属性判定（进攻择优 × 防守连乘）', () => {
     expect(captureMultiplier(P('a', 'water', 'wing'), P('d', 'fire'))).toBe(2)
   })
 
-  it('副属性补克：水 攻 龙 1x，水+龙 攻 龙 → 龙克龙 2x', () => {
-    expect(captureMultiplier(P('a', 'water'), P('d', 'dragon'))).toBe(1)
+  it('副属性补克：水 攻 龙 0.5（官方水被龙抵抗），水+龙 攻 龙 → 龙克龙 2x', () => {
+    expect(captureMultiplier(P('a', 'water'), P('d', 'dragon'))).toBe(0.5)
     expect(captureMultiplier(P('a', 'water', 'dragon'), P('d', 'dragon'))).toBe(2)
   })
 
@@ -212,13 +271,13 @@ describe('双属性判定（进攻择优 × 防守连乘）', () => {
     expect(canCapture(P('a', 'fire'), P('d', 'water', 'normal'))).toBe(false)     // 0.5×1 仍被抵抗
   })
 
-  it('互克对作为防守组合（冰+地）：火被地抵抗抵消为 1，水克地仍为 2', () => {
+  it('互克对作为防守组合（冰+地）：火 2×0.5=1、水 0.5×2=1 均不可占领，电被地抵抗 0.5', () => {
     const def = P('d', 'ice', 'earth')
-    expect(captureMultiplier(P('a', 'fire'), def)).toBe(1)       // 2×0.5
-    expect(captureMultiplier(P('a', 'water'), def)).toBe(2)      // 1×2
-    expect(captureMultiplier(P('a', 'electric'), def)).toBe(0.5) // 1×0.5（地克电）
+    expect(captureMultiplier(P('a', 'fire'), def)).toBe(1)       // 火：克冰 2 × 被地抵抗 0.5
+    expect(captureMultiplier(P('a', 'water'), def)).toBe(1)      // 水：被冰抵抗 0.5 × 克地 2
+    expect(captureMultiplier(P('a', 'electric'), def)).toBe(0.5) // 电被地抵抗（1×0.5）
     expect(canCapture(P('a', 'fire'), def)).toBe(false)
-    expect(canCapture(P('a', 'water'), def)).toBe(true)
+    expect(canCapture(P('a', 'water'), def)).toBe(false)
   })
 
   it('互克对镜像对轰：光+幽 攻 光+幽 → 幽线 2×2=4，双向均可占领', () => {
