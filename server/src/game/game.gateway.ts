@@ -1,28 +1,72 @@
 /**
  * WS 网关：客户端消息格式 { event: string, data: object }（与 @nestjs/platform-ws 默认协议一致）。
  * H5 用浏览器原生 WebSocket，小程序用 Taro.connectSocket，均可直连。
+ *
+ * 应用层心跳：客户端每 15s 发 app:ping（服务端回 app:pong 并刷新房间 TTL）；
+ * 超过 WS_HEARTBEAT_TIMEOUT_MS 未 ping 的连接视为半开死连接，主动断开以驱动清理
+ * （否则房间会一直握着一个已掉线的房主，形成"幽灵房间"）。
  */
+import { Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common'
 import { SubscribeMessage, WebSocketGateway } from '@nestjs/websockets'
 import type { WebSocket } from 'ws'
 import { AuthService } from '../auth/auth.service.js'
+import { createHeartbeat, WS_HEARTBEAT_SWEEP_MS } from '../common/ws-heartbeat.js'
 import { MatchService } from './match.service.js'
 import { RoomService } from './room.service.js'
 
 @WebSocketGateway({ path: '/ws' })
-export class GameGateway {
+export class GameGateway implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(GameGateway.name)
+  /** 应用层心跳跟踪（半开连接检测） */
+  private readonly heartbeat = createHeartbeat()
+  private sweepTimer: NodeJS.Timeout | null = null
+
   constructor(
     private readonly matchService: MatchService,
     private readonly roomService: RoomService,
     private readonly auth: AuthService,
   ) {}
 
+  onModuleInit(): void {
+    this.sweepTimer = setInterval(() => this.sweepStaleSockets(), WS_HEARTBEAT_SWEEP_MS)
+    this.sweepTimer.unref()
+  }
+
+  onModuleDestroy(): void {
+    if (this.sweepTimer) clearInterval(this.sweepTimer)
+  }
+
+  /** 扫描死连接并断开（terminate 会触发 handleDisconnect → 对局宽限/房间席位清理） */
+  private sweepStaleSockets(): void {
+    const stale = this.heartbeat.stale()
+    for (const socket of stale) {
+      this.heartbeat.untrack(socket)
+      this.logger.warn(`ws heartbeat timeout, terminating stale connection (alive=${this.heartbeat.size})`)
+      try {
+        (socket as WebSocket).terminate()
+      } catch {
+        // 已关闭：忽略
+      }
+    }
+  }
+
   handleConnection(client: WebSocket): void {
-    ;(client as unknown as { _alive?: boolean })._alive = true
+    this.heartbeat.track(client)
   }
 
   handleDisconnect(client: WebSocket): void {
+    this.heartbeat.untrack(client)
     this.matchService.handleDisconnect(client)
     this.roomService.handleDisconnect(client)
+  }
+
+  /** 应用层心跳：刷新连接活跃时间 + 房间 TTL（连接中的房间不应被 TTL 回收） */
+  @SubscribeMessage('app:ping')
+  onAppPing(client: WebSocket, data: { playerId?: string }) {
+    this.heartbeat.touch(client)
+    if (data?.playerId) this.roomService.touch(String(data.playerId).slice(0, 64))
+    client.send(JSON.stringify({ event: 'app:pong', data: { ts: Date.now() } }))
+    return { ok: true }
   }
 
   @SubscribeMessage('queue:join')

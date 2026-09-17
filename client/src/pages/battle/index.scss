@@ -56,6 +56,13 @@
     color: #8a8175;
   }
 
+  /* 大厅连接中断提示（半开连接/服务端重启：点按钮不再静默无反馈） */
+  &__conn-lost {
+    margin-top: 12px;
+    font-size: 24px;
+    color: #d05048;
+  }
+
   &__room-actions {
     display: flex;
     justify-content: center;

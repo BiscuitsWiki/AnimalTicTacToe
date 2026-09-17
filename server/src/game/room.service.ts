@@ -18,6 +18,11 @@ const ROOM_CODE_LEN = 6
 const ROOM_TTL_MS = Number(process.env.ROOM_TTL_MS ?? 2 * 60 * 60 * 1000)
 /** 房主暂离保留时间（毫秒）：左滑/断线后无坐席玩家时房间保留 3 分钟（可用 ROOM_AWAY_GRACE_MS 覆盖） */
 const ROOM_AWAY_GRACE_MS = Number(process.env.ROOM_AWAY_GRACE_MS ?? 3 * 60 * 1000)
+/**
+ * 房主断线→转让所有权的宽限（毫秒）：等待期房主掉线且房客在场时，
+ * 先保留房主席位（灰显）一小段时间再转让，避免一次网络抖动就把房主悄悄降级（可用 ROOM_HOST_TRANSFER_GRACE_MS 覆盖）。
+ */
+const ROOM_HOST_TRANSFER_GRACE_MS = Number(process.env.ROOM_HOST_TRANSFER_GRACE_MS ?? 30_000)
 /** 房间码碰撞重试上限 */
 const CODE_RETRY = 5
 /** 观战席人数上限 */
@@ -106,11 +111,10 @@ export class RoomService implements OnModuleInit {
             room.guest = null
           }
           if (room.host.away) {
-            if (room.guest && !room.guest.away) {
-              this.transferOnHostGone(room)
-            } else {
-              room.hostAwayTimer = setTimeout(() => this.expireHostAway(room), ROOM_AWAY_GRACE_MS)
-            }
+            // 房主未归：同样先进入宽限，到期仍有在场坐席玩家才转让（避免网络抖动即易主）
+            this.clearHostAwayTimer(room)
+            const grace = room.guest && !room.guest.away ? ROOM_HOST_TRANSFER_GRACE_MS : ROOM_AWAY_GRACE_MS
+            room.hostAwayTimer = setTimeout(() => this.expireHostAway(room), grace)
           }
           this.broadcastState(room)
           this.logger.log(`room ${room.roomId}: match ended, back to waiting`)
@@ -334,21 +338,23 @@ export class RoomService implements OnModuleInit {
     }
   }
 
-  /** 房主断线：playing 保留席位；waiting 有坐席玩家立即转让、无则暂离计时 */
+  /**
+   * 房主断线（左滑/关闭网页/半开连接被心跳判死）：playing 保留席位；
+   * waiting 一律先进入宽限（席位灰显），到期才按下列规则处置：
+   * 有在场坐席玩家 → 转让所有权；无人 → 解散房间。
+   * 房客在场时宽限取 ROOM_HOST_TRANSFER_GRACE_MS（短），无人时取 ROOM_AWAY_GRACE_MS（长）。
+   */
   private disconnectHost(room: Room): void {
     room.host.away = true
     if (room.phase === 'playing') {
       this.broadcastState(room)
       return
     }
-    if (room.guest) {
-      this.transferOnHostGone(room)
-      return
-    }
     this.clearHostAwayTimer(room)
-    room.hostAwayTimer = setTimeout(() => this.expireHostAway(room), ROOM_AWAY_GRACE_MS)
+    const grace = room.guest && !room.guest.away ? ROOM_HOST_TRANSFER_GRACE_MS : ROOM_AWAY_GRACE_MS
+    room.hostAwayTimer = setTimeout(() => this.expireHostAway(room), grace)
     this.broadcastState(room)
-    this.logger.log(`room ${room.roomId}: host away, grace ${ROOM_AWAY_GRACE_MS}ms`)
+    this.logger.log(`room ${room.roomId}: host away, grace ${grace}ms`)
   }
 
   /** 房客断线：playing 保留席位至对局结束；waiting 立即清空坐席 */
@@ -494,6 +500,13 @@ export class RoomService implements OnModuleInit {
 
   isPlayerInRoom(playerId: string): boolean {
     return this.playerRoom.has(playerId)
+  }
+
+  /** 房间活动（客户端心跳 app:ping 触发）：刷新 TTL —— 连接中的房间不应被"无活动"回收 */
+  touch(playerId: string): void {
+    const roomId = this.playerRoom.get(playerId)
+    const room = roomId ? this.rooms.get(roomId) : undefined
+    if (room) this.refreshTtl(room)
   }
 
   /** 玩家所在房间 id（未在房间返回 undefined） */

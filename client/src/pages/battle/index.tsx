@@ -50,6 +50,8 @@ const RECONNECT_MAX_TRIES = 8
 const RECONNECT_WAIT_MS = 3000
 /** 回合倒计时（毫秒）：超时未行动自动跳过（与服务端 TURN_TIMEOUT_MS 保持一致） */
 const TURN_TIMEOUT_MS = 30_000
+/** 房主操作（开始/换边/转让）应答超时（毫秒）：无应答视为连接异常，触发重连 */
+const ROOM_ACK_TIMEOUT_MS = 3000
 /** 手牌上限撕牌动效时长（毫秒）：动效期间撕牌 overlay 不可点击 */
 const SHRED_FX_MS = 1200
 
@@ -138,6 +140,38 @@ export default function Battle () {
     setLog(prev => [...lines, ...prev].slice(0, 30))
   }
 
+  /**
+   * 统一挂载连接死因提示：半开连接（切网/锁屏）或发送时发现已断开 → toast + 战报，
+   * 实际重连由 socket 的 onclose 回调统一触发（attemptReconnect），避免重复重连链。
+   */
+  const armSocket = (socket: GameSocket) => {
+    socket.pingData = () => ({ playerId: getUserId() })   // 心跳顺带刷新服务端房间 TTL
+    socket.onDead = () => {
+      if (endedRef.current) return
+      setConnLost(true)
+      pushLog(['连接已断开，正在重连…'])
+      Taro.showToast({ title: '连接已断开，正在重连…', icon: 'none' })
+    }
+    return socket
+  }
+
+  /** 房间操作应答超时（3s）：无应答视为连接异常，提示并触发重连 */
+  const sendRoomAction = (event: string, data: Record<string, unknown>, ackEvent: string) => {
+    const socket = sockRef.current
+    if (!socket) return
+    const gen = genRef.current
+    let acked = false
+    const offAck = socket.once(ackEvent, () => { acked = true })
+    socket.send(event, data)
+    setTimeout(() => {
+      offAck()
+      if (acked || gen !== genRef.current || endedRef.current) return
+      Taro.showToast({ title: '服务器无响应，正在重连…', icon: 'none' })
+      pushLog(['房间操作无应答，正在重连…'])
+      socket.markDead()
+    }, ROOM_ACK_TIMEOUT_MS)
+  }
+
   /** 手牌上限撕牌动效：shredded 事件触发，短暂展示被撕的牌（overlay 指针穿透，不可点击） */
   const [shredFx, setShredFx] = useState<{ key: number; pieces: Piece[] } | null>(null)
   const shredKeyRef = useRef(0)
@@ -204,7 +238,7 @@ export default function Battle () {
   /** pvp 断线自动重连：新建 socket 发 match:reconnect，失败则退避重试 */
   const attemptReconnect = async (gen: number, triesLeft = RECONNECT_MAX_TRIES) => {
     if (gen !== genRef.current || endedRef.current) return
-    const socket = new GameSocket()
+    const socket = armSocket(new GameSocket())
     try {
       await socket.connect()
     } catch {
@@ -244,6 +278,17 @@ export default function Battle () {
           playerId: getUserId(),
           name: getAuthUser()?.nickname ?? '玩家',
         })
+        return
+      }
+      // room 模式且不在对局中：房间已不存在（服务端重启/已解散）→ 明确告知，停止重连
+      if (mode === 'room' && !pvpRef.current) {
+        settled = true
+        endedRef.current = true
+        socket.close()
+        setConnLost(true)
+        setWaiting(false)
+        setJoinError('房间已不存在（服务器可能已重启或房间已解散），请返回重新创建')
+        pushLog(['房间已不存在，请返回重新创建房间'])
         return
       }
       // 匹配局已销毁（宽限期超时被判负等）
@@ -324,7 +369,7 @@ export default function Battle () {
     endedRef.current = false
     // 先确保登录（游客登录失败也允许以游客身份匹配旧行为降级）
     const user = await ensureLogin()
-    const socket = new GameSocket()
+    const socket = armSocket(new GameSocket())
     try {
       await socket.connect(undefined, () => {
         // 对局中断线且未终局：自动重连
@@ -493,10 +538,12 @@ export default function Battle () {
       return
     }
     const user = await ensureLogin()
-    const socket = new GameSocket()
+    const socket = armSocket(new GameSocket())
     try {
       await socket.connect(undefined, () => {
-        if (pvpRef.current && !endedRef.current) attemptReconnect(++genRef.current)
+        // 对局中断线且未终局：自动重连；房间大厅阶段断线同样重连并重进房间
+        // （服务端重启/网络抖动都会走到这里，否则会留下"幽灵大厅"）
+        if (!endedRef.current) attemptReconnect(++genRef.current)
       })
     } catch {
       setConnLost(true)
@@ -782,17 +829,17 @@ export default function Battle () {
 
   /** 房主开始对局（蓝方坐席入座后可点） */
   const startRoomGame = () => {
-    sockRef.current?.send('room:start', { roomId, token: getToken(), playerId: getUserId() })
+    sendRoomAction('room:start', { roomId, token: getToken(), playerId: getUserId() }, 'room:started')
   }
 
   /** 房主转让所有权给蓝方坐席玩家 */
   const transferRoomHost = () => {
-    sockRef.current?.send('room:host:transfer', { roomId, token: getToken(), playerId: getUserId() })
+    sendRoomAction('room:host:transfer', { roomId, token: getToken(), playerId: getUserId() }, 'room:transferred')
   }
 
   /** 房主换边：红蓝坐席互换（选择先后手），仅等待阶段 */
   const swapRoomSeats = () => {
-    sockRef.current?.send('room:swap', { roomId, token: getToken(), playerId: getUserId() })
+    sendRoomAction('room:swap', { roomId, token: getToken(), playerId: getUserId() }, 'room:swapped')
   }
 
   /** H5 邀请链接（小程序端无 location，P4.3 换分享卡片） */
@@ -930,6 +977,9 @@ export default function Battle () {
                 观战席：{roomState?.spectatorCount ?? 0} 人
                 {roomState?.phase === 'playing' ? ' · 对局进行中' : ''}
               </Text>
+              {connLost && (
+                <Text className='battle__conn-lost'>连接已断开，正在重连…（可点「退出房间」返回）</Text>
+              )}
               {isHost ? (
                 <View className='battle__room-actions'>
                   <View
