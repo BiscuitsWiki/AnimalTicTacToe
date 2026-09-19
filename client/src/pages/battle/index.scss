@@ -477,6 +477,16 @@
   }
 }
 
+/**
+ * 最新一手标记（等腰直角三角形 · 圆角版）：直角在右下（与卡牌右下角同向），斜边朝左上。
+ * 用 SVG 的 stroke-linejoin: round 得到圆角（clip-path 多边形无法做圆角），
+ * 底层白描边 = 原圆点的白色描边环，压在卡图上仍清晰可分。
+ * $hex 传不含 # 的十六进制色（数据 URI 内 # 必须写作 %23）。
+ */
+@mixin last-move-mark($hex) {
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%3E%3Cpath%20d='M20%204v16H4z'%20fill='%23fff'%20stroke='%23fff'%20stroke-width='6'%20stroke-linejoin='round'/%3E%3Cpath%20d='M20%204v16H4z'%20fill='%23#{$hex}'%20stroke='%23#{$hex}'%20stroke-width='1.5'%20stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
 .piece {
   /* 占位卡牌：固定大小铺满整个格子，圆角与格子一致；粗红/蓝边框即阵营（无内边框圆角缝隙） */
   position: absolute;
@@ -539,7 +549,7 @@
     z-index: 1;
   }
 
-  /* 右下角最新一手红/蓝圆点（同格时并列显示） */
+  /* 右下角最新一手标记（等腰直角三角形·圆角版；直角与卡牌右下角同向，同格时并列显示） */
   &__dots {
     position: absolute;
     bottom: 15px;
@@ -549,18 +559,21 @@
     z-index: 1;
   }
 
+  /* 三角形用内联 SVG 描边成圆角（stroke-linejoin: round）——
+     clip-path 多边形做不出圆角，SVG 数据 URI 在 H5 与小程序两端表现一致；
+     外层白描边 = 原圆点的白色描边环，保证压在卡图上时仍清晰可分 */
   &__dot {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    box-shadow: 0 0 0 2px #fff;
+    width: 20px;
+    height: 20px;
+    background-repeat: no-repeat;
+    background-size: 100% 100%;
 
     &--red {
-      background: #e0654a;
+      @include last-move-mark('e0654a');
     }
 
     &--blue {
-      background: #4f7bd9;
+      @include last-move-mark('4f7bd9');
     }
   }
 }
