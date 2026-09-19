@@ -52,8 +52,8 @@ const RECONNECT_WAIT_MS = 3000
 const TURN_TIMEOUT_MS = 30_000
 /** 房主操作（开始/换边/转让）应答超时（毫秒）：无应答视为连接异常，触发重连 */
 const ROOM_ACK_TIMEOUT_MS = 3000
-/** 手牌上限撕牌动效时长（毫秒）：动效期间撕牌 overlay 不可点击 */
-const SHRED_FX_MS = 1200
+/** 手牌上限撕牌动效时长（毫秒）：与 index.scss 的 shred-* 动画时长保持一致（留出看清卡面+文案的时间） */
+const SHRED_FX_MS = 2600
 
 function matchFrom(src: DeckSource): MatchState {
   return createMatch({ deck: src.deck })
@@ -131,6 +131,9 @@ export default function Battle () {
   const aiReportedRef = useRef(false)
   /** 重连代际号：restart/unload 时递增使旧重试链失效 */
   const genRef = useRef(0)
+  /** mySide / spectating 的 ref 镜像：socket 回调闭包可能过期，判"是否本方被撕牌"须读最新值 */
+  const mySideRef = useRef<Side>('red')
+  const spectRef = useRef(false)
   /** 举报面板：正在举报的棋子（棋盘/手牌上的顶层棋子） */
   const [reportTarget, setReportTarget] = useState<{ pieceId: string; name: string } | null>(null)
   /** 认输确认弹窗 */
@@ -179,8 +182,9 @@ export default function Battle () {
   /** 事件统一消费：战报文案 + 撕牌动效（联机 game:state 与本地结算共用） */
   const consumeEvents = (events: PlaceEvent[]) => {
     if (events.length > 0) pushLog(events.map(eventToText))
+    // 撕牌动效只在"本方被撕"时播放：对方与观战视角收到的 shredded 事件为脱敏占位，不播动效
     const shred = events.find((e): e is Extract<PlaceEvent, { type: 'shredded' }> => e.type === 'shredded')
-    if (shred && shred.pieces.length > 0) {
+    if (shred && shred.pieces.length > 0 && !spectRef.current && shred.side === mySideRef.current) {
       shredKeyRef.current += 1
       const key = shredKeyRef.current
       setShredFx({ key, pieces: shred.pieces })
@@ -617,6 +621,12 @@ export default function Battle () {
   useEffect(() => {
     myRoleRef.current = myRole
   }, [myRole])
+
+  // mySide / spectating 同步到 ref（撕牌动效归属判定用，避免闭包读到旧值）
+  useEffect(() => {
+    mySideRef.current = mySide
+    spectRef.current = spectating
+  }, [mySide, spectating])
 
   // 页面卸载：断开 WS 并终止重连（等待房间随断线自动解散）
   useUnload(() => {
@@ -1187,37 +1197,6 @@ export default function Battle () {
         )}
       </View>
 
-      {/* 手牌上限撕牌动效：shredded 事件触发，两半撕裂飞散（指针穿透，动效期间不可点击） */}
-      {shredFx && (
-        <View className='shred-fx' key={shredFx.key}>
-          {shredFx.pieces.map((p, i) => (
-            <View className='shred-fx__card' key={`${p.id}-${i}`}>
-              <View className='shred-fx__half shred-fx__half--top'>
-                {p.imageUrl && <Image className='shred-fx__img' src={p.imageUrl} mode='aspectFill' />}
-                <Text
-                  className='shred-fx__el'
-                  style={`background: ${ELEMENT_COLORS[p.element]}`}
-                >
-                  {ELEMENT_NAMES_ZH[p.element]}
-                </Text>
-                <Text className='shred-fx__name'>{p.name}</Text>
-              </View>
-              <View className='shred-fx__half shred-fx__half--bottom'>
-                {p.imageUrl && <Image className='shred-fx__img' src={p.imageUrl} mode='aspectFill' />}
-                <Text
-                  className='shred-fx__el'
-                  style={`background: ${ELEMENT_COLORS[p.element]}`}
-                >
-                  {ELEMENT_NAMES_ZH[p.element]}
-                </Text>
-                <Text className='shred-fx__name'>{p.name}</Text>
-              </View>
-            </View>
-          ))}
-          <Text className='shred-fx__label'>手牌已满 {HAND_LIMIT} 张，新抽的牌被撕毁</Text>
-        </View>
-      )}
-
       {/* 手牌（观战者只读：双方手牌隐藏） */}
       <View className='hand'>
         <View className='hand__title'>
@@ -1265,6 +1244,58 @@ export default function Battle () {
                 <Text className='card__name'>{piece.name}</Text>
               </View>
             ))}
+
+            {/* 手牌上限撕牌动效：紧贴手牌右侧展示被撕的牌（手牌满 3 张才触发），不遮挡手牌；
+                两半撕裂飞散，指针穿透（动效期间不可点击） */}
+            {shredFx && (
+              <View className='shred-fx' key={shredFx.key}>
+                {shredFx.pieces.map((p, i) => (
+                  <View className='shred-fx__card' key={`${p.id}-${i}`}>
+                    <View className='shred-fx__half shred-fx__half--top'>
+                      {p.imageUrl && <Image className='shred-fx__img' src={p.imageUrl} mode='aspectFill' />}
+                      <View className='shred-fx__elements'>
+                        <Text
+                          className='shred-fx__el'
+                          style={`background: ${ELEMENT_COLORS[p.element]}`}
+                        >
+                          {ELEMENT_NAMES_ZH[p.element]}
+                        </Text>
+                        {p.element2 && (
+                          <Text
+                            className='shred-fx__el'
+                            style={`background: ${ELEMENT_COLORS[p.element2]}`}
+                          >
+                            {ELEMENT_NAMES_ZH[p.element2]}
+                          </Text>
+                        )}
+                      </View>
+                      <Text className='shred-fx__name'>{p.name}</Text>
+                    </View>
+                    <View className='shred-fx__half shred-fx__half--bottom'>
+                      {p.imageUrl && <Image className='shred-fx__img' src={p.imageUrl} mode='aspectFill' />}
+                      <View className='shred-fx__elements'>
+                        <Text
+                          className='shred-fx__el'
+                          style={`background: ${ELEMENT_COLORS[p.element]}`}
+                        >
+                          {ELEMENT_NAMES_ZH[p.element]}
+                        </Text>
+                        {p.element2 && (
+                          <Text
+                            className='shred-fx__el'
+                            style={`background: ${ELEMENT_COLORS[p.element2]}`}
+                          >
+                            {ELEMENT_NAMES_ZH[p.element2]}
+                          </Text>
+                        )}
+                      </View>
+                      <Text className='shred-fx__name'>{p.name}</Text>
+                    </View>
+                  </View>
+                ))}
+                <Text className='shred-fx__label'>手牌已满，新牌被撕毁</Text>
+              </View>
+            )}
           </View>
         )}
       </View>
