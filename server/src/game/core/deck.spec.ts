@@ -34,8 +34,8 @@ function dual(cardId: string, element: Element, element2: Element, skinCount = 1
   return { ...single(cardId, element, skinCount), element2 }
 }
 
-/** 预设等价池：18 属性 × 各 2 张单属性卡 + 15 张双属性卡 */
-function presetLikePool(): CardWithSkins[] {
+/** 满池夹具：18 属性 × 各 2 张单属性卡 + 15 张双属性卡 */
+function fullPool(): CardWithSkins[] {
   const pool: CardWithSkins[] = []
   ELEMENTS.forEach((el, i) => {
     pool.push(single(`s${i}-1`, el), single(`s${i}-2`, el))
@@ -51,9 +51,9 @@ function distinctNames(deck: Piece[]): number {
 }
 
 describe('buildGameDeck 四阶段组牌', () => {
-  it('阶段一 + 阶段二：预设等价池 36 张单属性（每属性 2 张不同名）+ 15 张双属性全部入堆', () => {
+  it('阶段一 + 阶段二：满池夹具 36 张单属性（每属性 2 张不同名）+ 15 张双属性全部入堆', () => {
     // size = 36 + 15 = 51：阶段三容量为 0，产出即阶段一 + 阶段二
-    const deck = buildGameDeck(presetLikePool(), { rng: lcg(), size: 51 })
+    const deck = buildGameDeck(fullPool(), { rng: lcg(), size: 51 })
     expect(deck).toHaveLength(51)
     for (const el of ELEMENTS) {
       const ids = new Set(deck.filter(p => p.element === el && !p.element2).map(p => p.cardId))
@@ -64,8 +64,8 @@ describe('buildGameDeck 四阶段组牌', () => {
     expect(distinctNames(deck)).toBe(51)
   })
 
-  it('默认张数：预设等价池补足到 60（阶段三只重复已入选的卡，不引入新卡）', () => {
-    const deck = buildGameDeck(presetLikePool(), { rng: lcg() })
+  it('默认张数：满池夹具补足到 60（阶段三只重复已入选的卡，不引入新卡）', () => {
+    const deck = buildGameDeck(fullPool(), { rng: lcg() })
     expect(deck).toHaveLength(DECK_SIZE)
     expect(distinctNames(deck)).toBe(51)
   })
@@ -106,7 +106,7 @@ describe('buildGameDeck 四阶段组牌', () => {
 
   it('阶段三：优先抽"还有未用皮肤"的卡 —— 同名副本皮肤互不相同', () => {
     // 池中全部卡皮肤数 ≥ 2，补足的重复副本必然能拿到不同皮肤
-    const pool = presetLikePool().map(c => ({ ...c, skins: [...c.skins, { skinId: `${c.cardId}-extra` }] }))
+    const pool = fullPool().map(c => ({ ...c, skins: [...c.skins, { skinId: `${c.cardId}-extra` }] }))
     const deck = buildGameDeck(pool, { rng: lcg() })
     expect(deck).toHaveLength(DECK_SIZE)
     const byCard = new Map<string, string[]>()
@@ -121,7 +121,7 @@ describe('buildGameDeck 四阶段组牌', () => {
   })
 
   it('阶段三：所有卡皮肤都用尽时退化为随机重复（同名同皮）', () => {
-    const pool = presetLikePool()      // 每张卡仅 1 款皮肤
+    const pool = fullPool()      // 每张卡仅 1 款皮肤
     const deck = buildGameDeck(pool, { rng: lcg() })
     expect(deck).toHaveLength(DECK_SIZE)
     const byCard = new Map<string, string[]>()

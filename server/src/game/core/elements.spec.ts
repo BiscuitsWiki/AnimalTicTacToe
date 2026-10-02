@@ -7,7 +7,6 @@
 import { describe, expect, it } from 'vitest';
 import { canCapture, captureMultiplier, effectiveness, ELEMENTS } from './elements.js';
 import { canPlace, place, topSide } from './engine.js';
-import { PRESET_DECK } from './pieces.js';
 import type { MatchState, Piece, Side } from './types.js';
 
 const P = (id: string, element: Piece['element'], element2?: Piece['element']): Piece =>
@@ -160,28 +159,5 @@ describe('双属性判定（服务端权威副本）', () => {
     // blue 火+草 攻 翼+水：火 1×0.5=0.5，草 0.5×2=1 → 择草 1 ≤ 1 不可叠
     expect(canPlace(s, 'blue', 0, 4)).toBe(false);
     expect(() => place(s, 'blue', 0, 4)).toThrow(/NOT_EFFECTIVE/);
-  });
-});
-
-describe('预设卡池（服务端副本守护）', () => {
-  it('51 张 = 36 单属性（18 属性 × 各 2 张）+ 15 双属性，双属性主副均合法且不同', () => {
-    expect(PRESET_DECK).toHaveLength(51);
-    expect(new Set(PRESET_DECK.map((p) => p.id)).size).toBe(51);
-    const singles = PRESET_DECK.filter((p) => !p.element2);
-    const duals = PRESET_DECK.filter((p) => p.element2);
-    expect(singles).toHaveLength(36);
-    expect(duals).toHaveLength(15);
-    for (const p of duals) {
-      expect(ELEMENTS).toContain(p.element);
-      expect(ELEMENTS).toContain(p.element2!);
-      expect(p.element2).not.toBe(p.element);
-    }
-    // 抽样：暗影冰龙王 冰+幽 克制 鳞角蛟 龙（冰克龙 2x）
-    const king = PRESET_DECK.find((p) => p.name === '暗影冰龙王');
-    const dragon = PRESET_DECK.find((p) => p.name === '鳞角蛟');
-    expect(king && dragon).toBeTruthy();
-    if (king && dragon) {
-      expect(canCapture(king, dragon)).toBe(true);
-    }
   });
 });

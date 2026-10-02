@@ -139,6 +139,12 @@ export class MatchService {
     // 同一玩家重复入队：直接忽略
     if (this.waiting.some(w => w.playerId === playerId)) return
 
+    // 空池守卫：公共池无上架卡则入队即拒绝（不产生幽灵等待者）
+    if (!await this.hasPlayableCards()) {
+      this.push(socket, 'queue:error', { error: 'no_cards' })
+      return
+    }
+
     const foe = this.waiting.shift()
     if (!foe) {
       this.waiting.push({ playerId, name, socket })
@@ -149,7 +155,17 @@ export class MatchService {
     // 随机先后手：掷硬币决定谁执红先行（房间模式不变，房主执红）
     const seeker = { playerId, name, socket }
     const [red, blue] = Math.random() < 0.5 ? [foe, seeker] : [seeker, foe]
-    await this.startDirectMatch(red, blue)
+    const matchId = await this.startDirectMatch(red, blue)
+    if (!matchId) {
+      // 竞态兜底：入队后最后一张上架皮肤被下架/回收
+      this.push(red.socket, 'queue:error', { error: 'no_cards' })
+      this.push(blue.socket, 'queue:error', { error: 'no_cards' })
+    }
+  }
+
+  /** 公共池是否有可参战卡（≥1 张上架皮肤） */
+  private async hasPlayableCards(): Promise<boolean> {
+    return (await this.pieceService.listPlayableCards()).length > 0
   }
 
   /** 玩家是否在对局中（房间/队列互斥校验用） */
@@ -162,19 +178,23 @@ export class MatchService {
 
   /**
    * 直接开局（匹配撮合 / P4.1 房间约战共用）：红方先行。
-   * @returns 对局房间 id（matchId）
+   * @returns 对局房间 id（matchId）；公共池无上架卡（空牌堆）时返回 null——不开局且不写入任何状态
    */
   async startDirectMatch(
     red: { playerId: string; name: string; socket: ClientSocket },
     blue: { playerId: string; name: string; socket: ClientSocket },
-  ): Promise<string> {
+  ): Promise<string | null> {
     // 公共池组牌（回合发牌制：初始手牌由引擎在开局时自动发）
     const deck = await this.buildDeck()
+    if (deck.length === 0) {
+      this.logger.warn('公共池无上架卡（无可用棋子），拒绝开局')
+      return null
+    }
 
     const roomId = `m${++matchSeq}`
     const room: GameRoom = {
       matchId: roomId,
-      state: createMatch({ deck }),   // buildDeck：预设 51 + 上架卡全部混合，不再截断
+      state: createMatch({ deck }),   // buildDeck：仅有上架皮肤的卡，不再截断
       players: [
         { playerId: red.playerId, name: red.name, side: 'red', socket: red.socket },
         { playerId: blue.playerId, name: blue.name, side: 'blue', socket: blue.socket },
@@ -564,8 +584,8 @@ export class MatchService {
   }
 
   /**
-   * 组牌：卡池 = 预设 51 张卡 + 有上架皮肤的工坊卡；四阶段抽 60 张（同名卡分配不同皮肤）。
-   * 详见 core/deck.ts（与客户端 AI/离线局同源）。
+   * 组牌：卡池 = 有 ≥1 张上架（approved）皮肤的卡；四阶段抽 60 张（同名卡分配不同皮肤）。
+   * 详见 core/deck.ts（与客户端 AI 局同源）。
    */
   private async buildDeck(): Promise<Piece[]> {
     return buildGameDeck(await this.pieceService.listPlayableCards())

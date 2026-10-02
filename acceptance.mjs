@@ -190,6 +190,8 @@ await check('uploads 静态服务（不存在文件应 404 而非 502）', async
 })
 
 // ---------- WS：快速匹配开局 ----------
+// 前置：目标库需 ≥1 张 approved 皮肤（CI 由 workflow 预置；本地/线上库先在工坊提交并通过审核），
+// 否则服务端按"公共池无上架卡"拒绝开局（客户端提示等待工坊作品上架）。
 await check('WS 快速匹配开局（双端收 match:started + game:state）', async () => {
   const a = wsClient('A')
   const b = wsClient('B')

@@ -226,6 +226,8 @@ export class RoomService implements OnModuleInit {
       { playerId: red.playerId, name: red.name, socket: bindSocket(red) },
       { playerId: blue.playerId, name: blue.name, socket: bindSocket(blue) },
     )
+    // 公共池为空（无上架卡）：不开局，房间保持等待态，房主可稍后重试
+    if (!matchId) return { ok: false, error: 'no_cards' }
     room.phase = 'playing'
     room.matchId = matchId
     this.refreshTtl(room)

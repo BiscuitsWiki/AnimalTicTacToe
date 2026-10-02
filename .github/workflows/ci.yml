@@ -53,6 +53,12 @@ jobs:
         env:
           DATABASE_URL: file:./ci.db
 
+      - name: 预置验收卡（1 张已上架皮肤，保证匹配/房间开局校验通过）
+        run: |
+          node -e 'import("@prisma/client").then(async ({ PrismaClient }) => { const p = new PrismaClient(); await p.card.create({ data: { cardId: "ci-card-1", cardName: "验收卡", element: "fire", source: "workshop" } }); await p.skin.create({ data: { skinId: "ci-skin-1", cardId: "ci-card-1", imageUrl: "/uploads/ci.png", status: "approved", authorId: "ci" } }); await p.$disconnect(); console.log("seeded 1 approved card") })'
+        env:
+          DATABASE_URL: file:./ci.db
+
       - name: 启动服务端
         run: |
           node dist/main.js &

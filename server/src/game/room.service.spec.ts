@@ -32,16 +32,20 @@ function fakeMatchService() {
   const attached: Array<{ matchId: string; count: number }> = []
   const endedCallbacks: Array<(matchId: string) => void> = []
   let seq = 0
+  let noCards = false
   return {
     started,
     attached,
     endedCallbacks,
     isPlayerInMatch: (id: string) => inMatch.has(id),
     setInMatch: (id: string, v: boolean) => (v ? inMatch.add(id) : inMatch.delete(id)),
+    /** 测试辅助：模拟公共池为空（开局被拒） */
+    setNoCards: (v: boolean) => { noCards = v },
     startDirectMatch: async (
       red: { playerId: string; name: string; socket: unknown },
       blue: { playerId: string; name: string; socket: unknown },
     ) => {
+      if (noCards) return null
       const matchId = `m${++seq}`
       started.push({ red, blue })
       inMatch.add(red.playerId)
@@ -194,6 +198,24 @@ describe('RoomService（坐席制）', () => {
     expect((await service.startGame(roomId, 'p1')).ok).toBe(true)
     // 重复开始
     expect(await service.startGame(roomId, 'p1')).toEqual({ ok: false, error: 'match_running' })
+  })
+
+  it('公共池无上架卡：开始对局被拒（no_cards），房间保持等待态且可重试', async () => {
+    const { res, sock: hostSock } = create()
+    if (!res.ok) return
+    const roomId = res.data.roomId
+    const { sock: guestSock } = await seatGuest(roomId)
+
+    match.setNoCards(true)
+    expect(await service.startGame(roomId, 'p1')).toEqual({ ok: false, error: 'no_cards' })
+    expect(match.started).toHaveLength(0)
+    // 未转播开局、未挂载观战
+    expect(hostSock.last('match:started')).toBeUndefined()
+    expect(guestSock.last('match:started')).toBeUndefined()
+    // 房间可重试：池恢复后再次开局成功
+    match.setNoCards(false)
+    expect((await service.startGame(roomId, 'p1')).ok).toBe(true)
+    expect(match.started).toHaveLength(1)
   })
 
   it('开始对局：房主红方、蓝方坐席为蓝方，观战者挂载并收转播', async () => {

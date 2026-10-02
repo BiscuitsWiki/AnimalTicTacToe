@@ -204,7 +204,7 @@ export default function Workshop () {
 
       {serverDown && (
         <View className='workshop__notice'>
-          <Text>无法连接服务器（{API_BASE || '同源服务'}）。当前可正常游玩本地对局，创作功能需先启动后端：server 目录下执行 pnpm run start:dev</Text>
+          <Text>无法连接服务器（{API_BASE || '同源服务'}）。创作功能需先启动后端：server 目录下执行 pnpm run start:dev</Text>
         </View>
       )}
 

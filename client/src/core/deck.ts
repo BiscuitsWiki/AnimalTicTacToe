@@ -18,7 +18,7 @@ export const PHASE1_PER_ELEMENT = 2
 /** 阶段二：双属性随机抽 18 张（名称不同） */
 export const PHASE2_COUNT = 18
 
-/** 一款皮肤（skinId = 皮肤行主键；预设卡内置外观为无图皮肤） */
+/** 一款皮肤（skinId = 皮肤行主键；imageUrl 可选） */
 export interface DeckSkin {
   skinId: string
   imageUrl?: string

@@ -6,7 +6,6 @@
  */
 import { describe, expect, it } from 'vitest'
 import { canCapture, captureMultiplier, effectiveness, ELEMENTS } from '../elements'
-import { PRESET_DECK } from '../pieces'
 import {
   canPlace, cloneState, createMatch, dealCountFor, hasAnyLegalPlacement,
   legalCells, linesOf, place, resign, shuffle, skip, topSide,
@@ -158,38 +157,6 @@ describe('属性克制表（洛克王国 18 属性）', () => {
     expect(mutual.sort()).toEqual([
       'cute|dark', 'dark|cute', 'earth|ice', 'ghost|light', 'ice|earth', 'light|ghost',
     ])
-  })
-
-  it('预设牌：36 单属性（18 属性 × 各 2 张）+ 15 双属性（《洛克王国：世界》现役精灵），全部合法', () => {
-    expect(PRESET_DECK).toHaveLength(51)
-    expect(new Set(PRESET_DECK.map(p => p.id)).size).toBe(51)    // id 唯一
-    expect(new Set(PRESET_DECK.map(p => p.name)).size).toBe(51)  // 名字唯一
-    const singles = PRESET_DECK.filter(p => !p.element2)
-    const duals = PRESET_DECK.filter(p => p.element2)
-    expect(singles).toHaveLength(36)
-    expect(duals).toHaveLength(15)
-    const count = new Map<string, number>()
-    for (const p of singles) {
-      expect(ELEMENTS).toContain(p.element)
-      count.set(p.element, (count.get(p.element) ?? 0) + 1)
-    }
-    expect(count.size).toBe(18)
-    for (const el of ELEMENTS) {
-      expect(count.get(el)).toBe(2)
-    }
-    for (const p of duals) {
-      expect(ELEMENTS).toContain(p.element)
-      expect(ELEMENTS).toContain(p.element2!)
-      expect(p.element2).not.toBe(p.element)
-    }
-    // 双属性预设棋子参与克制判定（抽样：熔岩布丁 水+火 vs 炎尾狐 火）
-    const pudding = PRESET_DECK.find(p => p.name === '熔岩布丁')
-    const fox = PRESET_DECK.find(p => p.name === '炎尾狐')
-    expect(pudding && fox).toBeTruthy()
-    if (pudding && fox) {
-      expect(canCapture(pudding, fox)).toBe(true)    // 水+火 攻 火：择水 2x
-      expect(canCapture(fox, pudding)).toBe(false)   // 火 攻 水+火：0.5×1 被抵抗
-    }
   })
 })
 
@@ -519,7 +486,8 @@ describe('回合抽牌', () => {
 
 describe('手牌上限撕牌（HAND_LIMIT=3，防跳过/拖时间囤牌）', () => {
   it('初始发牌 3 张恰好等于上限，不触发撕牌', () => {
-    const s = createMatch({ deck: [...PRESET_DECK] })
+    const deck = Array.from({ length: 8 }, (_, i) => P(`dk${i}`, 'normal'))
+    const s = createMatch({ deck })
     expect(s.hands.red).toHaveLength(3)
     expect(s.hands.blue).toHaveLength(3)
   })

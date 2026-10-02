@@ -7,6 +7,8 @@
  * 3. 红方新连接继续落子，对局正常推进
  * 4. 房间模式：建房 → 双方入座 → 开局 → 蓝方重进恢复（room:join 同房间重进）
  * 5. 无对局探测：新玩家 match:reconnect 返回 not_in_match（信封事件）
+ *
+ * 前置：库中 ≥1 张 approved 皮肤（预设卡池已移除；无上架卡时服务端拒绝开局）
  */
 import WebSocket from 'ws'
 

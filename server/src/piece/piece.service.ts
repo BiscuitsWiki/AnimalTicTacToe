@@ -6,7 +6,6 @@ import { PrismaService } from '../prisma.service.js'
 import { ContentSecurityService } from './content-security.service.js'
 import { ELEMENTS, ELEMENT_NAMES_ZH } from '../game/core/elements.js'
 import type { Element } from '../game/core/elements.js'
-import { PRESET_DECK } from '../game/core/pieces.js'
 import type { CardWithSkins, DeckSkin } from '../game/core/deck.js'
 
 /** 18 属性白名单（单一来源：core/elements.ts，与客户端保持一致） */
@@ -65,12 +64,12 @@ export class PieceService {
     private readonly sec: ContentSecurityService,
   ) {}
 
-  /** 启动迁移：旧属性 ID 洗成洛克王国属性 + 预设卡 seed + 回收区过期巡检 */
+  /** 启动迁移：旧属性 ID 洗成洛克王国属性 + 历史预设卡清理 + 回收区过期巡检 */
   async onModuleInit() {
     for (const [from, to] of Object.entries(ELEMENT_ALIASES)) {
       await this.prisma.card.updateMany({ where: { element: from }, data: { element: to } })
     }
-    await this.seedPresetCards()
+    await this.cleanupPresetCards()
     // 回收区过期销毁巡检：每天清理一次（unref 避免阻塞进程退出）
     const timer = setInterval(() => {
       this.cleanupExpiredRecycled().catch(() => {})
@@ -79,62 +78,35 @@ export class PieceService {
   }
 
   /**
-   * 预设卡 seed（幂等）：51 张预设卡入库为 Card（source=preset），卡牌 id 固定为 pc-<预设 id>。
-   * 同名卡已存在时以预设定义为准：属性一致则收编为预设卡（保留其卡牌 id 与皮肤），
-   * 属性不一致则改回预设属性并驳回其皮肤（预设卡是卡池属性覆盖的保证）。
+   * 历史预设卡清理（幂等，启动时执行）：
+   * - 无任何皮肤的预设卡（source='preset'）删除（释放名称，可被工坊重新创作）
+   * - 已有任意皮肤（approved/pending/rejected/reported/recycled）的预设卡转为 source='workshop'，保留玩家作品
+   * 先查全量再删/改，避免迭代中误判。
    */
-  private async seedPresetCards(): Promise<void> {
-    for (const preset of PRESET_DECK) {
-      const existing = await this.prisma.card.findUnique({ where: { cardName: preset.name } })
-      if (!existing) {
-        await this.prisma.card.create({
-          data: {
-            cardId: `pc-${preset.id}`,
-            cardName: preset.name,
-            element: preset.element,
-            element2: preset.element2 ?? null,
-            source: 'preset',
-          },
-        })
-        continue
-      }
-      const sameElement = sameElementCombo(existing, preset)
-      if (sameElement) {
-        const canonicalOrder =
-          existing.element === preset.element && (existing.element2 ?? null) === (preset.element2 ?? null)
-        if (existing.source !== 'preset' || !canonicalOrder) {
-          // 收编为预设卡：属性以预设定义为准（含主/副顺序规范化）
-          await this.prisma.card.update({
-            where: { cardId: existing.cardId },
-            data: {
-              element: preset.element,
-              element2: preset.element2 ?? null,
-              source: 'preset',
-            },
-          })
-          this.logger.log(
-            `预设卡收编同名卡牌「${preset.name}」(${existing.cardId})：属性规范为 ${elementLabel(preset.element, preset.element2)}`,
-          )
-        }
-        continue
-      }
-      // 同名不同属性：预设定义权威，改回预设属性并驳回该卡全部皮肤
-      await this.prisma.card.update({
-        where: { cardId: existing.cardId },
-        data: {
-          element: preset.element,
-          element2: preset.element2 ?? null,
-          source: 'preset',
-        },
-      })
-      const rejected = await this.prisma.skin.updateMany({
-        where: { cardId: existing.cardId },
-        data: { status: 'rejected', rejectReason: CARD_CONFLICT_REASON },
-      })
-      this.logger.warn(
-        `预设卡「${preset.name}」与原工坊卡属性冲突（${elementLabel(existing.element, existing.element2)} → ${elementLabel(preset.element, preset.element2)}），已驳回其 ${rejected.count} 个皮肤`,
-      )
+  private async cleanupPresetCards(): Promise<void> {
+    const presets = await this.prisma.card.findMany({
+      where: { source: 'preset' },
+      select: { cardId: true },
+    })
+    if (presets.length === 0) return
+    const presetIds = presets.map(p => p.cardId)
+    const skinRows = await this.prisma.skin.findMany({
+      where: { cardId: { in: presetIds } },
+      select: { cardId: true },
+    })
+    const withSkin = new Set(skinRows.map(s => s.cardId))
+    const orphanIds = presetIds.filter(id => !withSkin.has(id))
+    const keepIds = presetIds.filter(id => withSkin.has(id))
+    if (orphanIds.length > 0) {
+      await this.prisma.card.deleteMany({ where: { cardId: { in: orphanIds } } })
     }
+    if (keepIds.length > 0) {
+      await this.prisma.card.updateMany({
+        where: { cardId: { in: keepIds } },
+        data: { source: 'workshop' },
+      })
+    }
+    this.logger.log(`预设卡清理：删除 ${orphanIds.length} 张无皮肤卡、保留 ${keepIds.length} 张含皮肤卡（转为工坊来源）`)
   }
 
   /**
@@ -247,13 +219,14 @@ export class PieceService {
   }
 
   /**
-   * 对局卡池：预设卡（内置无图外观 + 库中同名卡的上架皮肤）+ 有 ≥1 上架皮肤的工坊卡。
-   * 属性以卡牌为准（预设卡以代码定义为权威）。
+   * 对局卡池：仅有 ≥1 张上架（approved）皮肤的卡（公共池全部来自工坊上传并通过审核的作品）。
+   * 无上架皮肤的卡不参战；空池返回空数组（上层禁止开局）。
    */
   async listPlayableCards(): Promise<CardWithSkins[]> {
     const [cards, skins] = await Promise.all([
       this.prisma.card.findMany({
         select: { cardId: true, cardName: true, element: true, element2: true },
+        orderBy: { createdAt: 'asc' },
       }),
       this.prisma.skin.findMany({
         where: { status: 'approved' },
@@ -267,27 +240,8 @@ export class PieceService {
       list.push({ skinId: s.skinId, ...(s.imageUrl ? { imageUrl: s.imageUrl } : {}) })
       skinsByCard.set(s.cardId, list)
     }
-    const cardByName = new Map(cards.map(c => [c.cardName, c]))
     const pool: CardWithSkins[] = []
-    const used = new Set<string>()
-
-    // 预设卡：代码为权威（内置外观恒可用，库中同名卡的上架皮肤并入）
-    for (const preset of PRESET_DECK) {
-      const row = cardByName.get(preset.name)
-      const cardId = row?.cardId ?? `pc-${preset.id}`
-      const skinList = [...(skinsByCard.get(cardId) ?? [])]
-      used.add(cardId)
-      pool.push({
-        cardId,
-        name: preset.name,
-        element: preset.element,
-        ...(preset.element2 ? { element2: preset.element2 } : {}),
-        skins: [{ skinId: preset.id }, ...skinList.filter(s => s.skinId !== preset.id)],
-      })
-    }
-    // 工坊卡：有上架皮肤才参战
     for (const c of cards) {
-      if (used.has(c.cardId)) continue
       const played = skinsByCard.get(c.cardId) ?? []
       if (played.length === 0) continue
       pool.push({
@@ -368,11 +322,10 @@ export class PieceService {
     const ids = expired.map(s => s.skinId)
     await this.prisma.skinReport.deleteMany({ where: { skinId: { in: ids } } })
     await this.prisma.skin.deleteMany({ where: { skinId: { in: ids } } })
-    // 工坊卡若已无任何皮肤（名称可重新使用），回收卡牌行；预设卡恒保留
+    // 卡牌若已无任何皮肤（名称可重新使用），回收卡牌行
     await this.prisma.card.deleteMany({
       where: {
         cardId: { in: [...new Set(expired.map(s => s.cardId))] },
-        source: 'workshop',
         skins: { none: {} },
       },
     })
@@ -395,9 +348,9 @@ export class PieceService {
       throw new BadRequestException('仅待审核的棋子可撤回')
     }
     await this.prisma.skin.delete({ where: { skinId } })
-    // 工坊卡若已无任何皮肤（名称可重新使用），回收卡牌行；预设卡恒保留
+    // 卡牌若已无任何皮肤（名称可重新使用），回收卡牌行
     await this.prisma.card.deleteMany({
-      where: { cardId: skin.cardId, source: 'workshop', skins: { none: {} } },
+      where: { cardId: skin.cardId, skins: { none: {} } },
     })
     // 尽力清理已上传的图片文件（资源隔离，失败静默）
     const m = /^\/uploads\/([^/]+)$/.exec(skin.imageUrl)

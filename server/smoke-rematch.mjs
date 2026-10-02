@@ -4,6 +4,8 @@
  * 2. 双方各自新建 socket 发 match:reconnect（模拟客户端 startPvpMatch(true) 的 probeResume）
  *    → 应返回 not_in_match（不残留旧对局）
  * 3. 双方重新 queue:join → 应再次撮合并开局（蓝方首回合不再等待发牌验证见 smoke-deal）
+ *
+ * 前置：库中 ≥1 张 approved 皮肤（预设卡池已移除；无上架卡时服务端拒绝开局）
  */
 import WebSocket from 'ws'
 

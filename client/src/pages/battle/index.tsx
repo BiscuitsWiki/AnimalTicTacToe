@@ -106,6 +106,8 @@ export default function Battle () {
   const [mySide, setMySide] = useState<Side>('red')
   const [oppoName, setOppoName] = useState(mode === 'ai' ? '电脑' : '对手')
   const [connLost, setConnLost] = useState(false)
+  /** 组牌/开局阻断提示（公共池无上架卡或后端不可达）：非空时加载页展示错误与返回按钮 */
+  const [deckError, setDeckError] = useState('')
   /** room 模式：房间状态（坐席/观战人数） */
   const [roomState, setRoomState] = useState<RoomStateView | null>(null)
   /** room 模式：本端坐席角色 */
@@ -348,11 +350,20 @@ export default function Battle () {
     })
   }
 
-  /** AI 模式开局 */
+  /** AI 模式开局：公共池无上架卡 / 后端不可达时阻断并提示（不进入空手牌对局） */
   const startAiMatch = async () => {
     setSelected(null)
     setMatch(null)
+    setDeckError('')
     const src = await buildDeckFromServer()
+    if (!src.ok) {
+      const msg = src.reason === 'server_down'
+        ? '无法连接服务器，请确认后端已启动（server: pnpm run start:dev）'
+        : '公共卡池暂无可用棋子，请等待工坊作品上架后再开始对局'
+      setDeckError(msg)
+      setLog([msg])
+      return
+    }
     setMatch(matchFrom(src))
     setMySide('red')
     setLog(['对局开始，红方先行'])
@@ -371,6 +382,7 @@ export default function Battle () {
   /** pvp 模式：登录 → 连接 WS 进入匹配；restart=true 为终局后"再来一局"主动重开 */
   const startPvpMatch = async (restart = false) => {
     endedRef.current = false
+    setDeckError('')
     // 先确保登录（游客登录失败也允许以游客身份匹配旧行为降级）
     const user = await ensureLogin()
     const socket = armSocket(new GameSocket())
@@ -405,6 +417,16 @@ export default function Battle () {
 
     socket.on('queue:waiting', () => {
       setLog(['匹配中，等待其他玩家加入…'])
+    })
+    // 开局阻断：公共池无上架卡（入队即拒 / 撮合瞬间被清空）→ 停止匹配并提示
+    socket.on('queue:error', (d: { error?: string }) => {
+      endedRef.current = true
+      sockRef.current = null
+      socket.close()
+      setWaiting(false)
+      setDeckError(d?.error === 'no_cards'
+        ? '公共卡池暂无可用棋子，请等待工坊作品上架后再匹配'
+        : '匹配失败，请稍后重试')
     })
     socket.on('match:started', (d: { youAre: Side; opponentName: string }) => {
       setWaiting(false)
@@ -529,7 +551,14 @@ export default function Battle () {
     // 开始对局失败（网络竞争等）
     socket.on('room:started', (d: { ok: boolean; error?: string }) => {
       if (d.ok) return
-      Taro.showToast({ title: d.error === 'no_guest' ? '对方尚未入座' : '暂时无法开始', icon: 'none' })
+      Taro.showToast({
+        title: d.error === 'no_guest'
+          ? '对方尚未入座'
+          : d.error === 'no_cards'
+            ? '公共卡池暂无可用棋子，请等待工坊作品上架'
+            : '暂时无法开始',
+        icon: 'none',
+      })
     })
   }
 
@@ -1058,13 +1087,13 @@ export default function Battle () {
     return (
       <View className='battle battle--loading'>
         <Text className='battle__loading-text'>
-          {connLost
+          {deckError || (connLost
             ? '服务器连接失败'
             : mode === 'pvp'
               ? '匹配中，等待其他玩家…'
-              : '牌堆组建中…'}
+              : '牌堆组建中…')}
         </Text>
-        {connLost ? (
+        {deckError || connLost ? (
           <View className='battle__back' onClick={goBackToMenu}>
             <Text>返回</Text>
           </View>

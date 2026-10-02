@@ -143,9 +143,9 @@ function compressH5(src: string, maxEdge: number): Promise<Blob | null> {
   })
 }
 
-/** 公共池（审核通过的皮肤，含所属卡牌名称与属性） */
+/** 公共池（审核通过的皮肤，含所属卡牌名称与属性）；limit 覆盖量需与服务端组牌口径一致 */
 export function fetchApprovedPieces(): Promise<ApiPiece[]> {
-  return getJSON<ApiPiece[]>('/pieces/approved?limit=100')
+  return getJSON<ApiPiece[]>('/pieces/approved?limit=500')
 }
 
 /** 按名称查卡牌（未占用时返回 null；用于提交时的同名卡提示与属性锁定） */

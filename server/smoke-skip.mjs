@@ -2,6 +2,8 @@
  * 跳过与平局改版 WS 冒烟：
  * 局1：红跳过（换边不补牌 / lastSkipped 同步 / skipped 事件）→ 蓝跳过 → 双方连续跳过 both_skip 平局终局
  * 局2：红跳过 → 蓝落子（lastSkipped 重置、对局继续）→ 蓝非本回合跳过被忽略 → 红落子正常换边
+ *
+ * 前置：库中 ≥1 张 approved 皮肤（预设卡池已移除；无上架卡时服务端拒绝开局）
  */
 import WebSocket from 'ws'
 

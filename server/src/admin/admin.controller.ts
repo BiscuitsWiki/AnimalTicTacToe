@@ -45,7 +45,6 @@ export class AdminController {
       },
       cards: {
         total: cardsBySource.reduce((n, g) => n + g._count._all, 0),
-        preset: cardCount('preset'),
         workshop: cardCount('workshop'),
       },
       matches: { total: matchTotal, today: matchToday },

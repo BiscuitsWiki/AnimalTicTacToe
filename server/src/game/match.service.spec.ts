@@ -13,9 +13,28 @@ vi.hoisted(() => {
 // eslint-disable-next-line import/first
 import { MatchService } from './match.service.js'
 import type { ClientView } from './match.service.js'
-import { PRESET_CARDS } from './core/pieces.js'
 import { DECK_SIZE } from './core/deck.js'
 import type { CardWithSkins } from './core/deck.js'
+import { ELEMENTS } from './core/elements.js'
+
+/** 满池夹具：18 属性 × 各 2 张单属性卡 + 15 张双属性卡（每卡 1 款皮肤） */
+function fullPool(): CardWithSkins[] {
+  const pool: CardWithSkins[] = []
+  ELEMENTS.forEach((el, i) => {
+    pool.push({ cardId: `s${i}-1`, name: `单${i}-1`, element: el, skins: [{ skinId: `s${i}-1-s1` }] })
+    pool.push({ cardId: `s${i}-2`, name: `单${i}-2`, element: el, skins: [{ skinId: `s${i}-2-s1` }] })
+  })
+  for (let i = 0; i < 15; i++) {
+    pool.push({
+      cardId: `d${i}`,
+      name: `双${i}`,
+      element: ELEMENTS[i],
+      element2: ELEMENTS[(i + 3) % ELEMENTS.length],
+      skins: [{ skinId: `d${i}-s1` }],
+    })
+  }
+  return pool
+}
 
 /** 可记录消息的最小 socket 替身 */
 class FakeSocket {
@@ -36,7 +55,7 @@ class FakeSocket {
   }
 }
 
-function makeService(pool: CardWithSkins[] = PRESET_CARDS) {
+function makeService(pool: CardWithSkins[] = fullPool()) {
   const pieceService = { listPlayableCards: async () => pool }
   const prisma = {
     match: { create: async () => ({ id: 'db-match-1' }) },
@@ -58,23 +77,37 @@ async function startGame() {
 }
 
 describe('MatchService 牌堆构建', () => {
-  it('无工坊皮肤：整副预设卡池抽 60 张（开局发 6 张 → 牌堆余 54）', async () => {
-    const service = makeService()
+  it('空卡池：拒绝开局（返回 null，不创建房间、不广播 match:started）', async () => {
+    const service = makeService([])
     const red = new FakeSocket()
     const blue = new FakeSocket()
-    await service.startDirectMatch(
+    const matchId = await service.startDirectMatch(
       { playerId: 'r', name: '红方', socket: red },
       { playerId: 'b', name: '蓝方', socket: blue },
     )
-    const view = red.views()[0]
-    expect(view.state.deck.length).toBe(DECK_SIZE - 6)
-    // 本方手牌明文：全部来自预设卡内置外观（d01~d51）
-    expect(view.state.hands.red.every((p: { id: string }) => /^d\d{2}$/.test(p.id))).toBe(true)
+    expect(matchId).toBeNull()
+    expect((service as unknown as { rooms: Map<string, unknown> }).rooms.size).toBe(0)
+    expect(red.last('match:started')).toBeUndefined()
+    expect(blue.last('match:started')).toBeUndefined()
   })
 
-  it('预设 + 工坊皮肤：牌堆精确 60 张，牌面只来自卡池（含工坊皮肤 id）', async () => {
+  it('空卡池：joinQueue 入队即拒绝（queue:error no_cards，不进等待队列）', async () => {
+    const service = makeService([])
+    const a = new FakeSocket()
+    const b = new FakeSocket()
+    await service.joinQueue('a', '甲', a)
+    expect(a.last<{ error: string }>('queue:error')).toEqual({ error: 'no_cards' })
+    expect(a.last('queue:waiting')).toBeUndefined()
+    await service.joinQueue('b', '乙', b)
+    expect(b.last<{ error: string }>('queue:error')).toEqual({ error: 'no_cards' })
+    expect(a.last('match:started')).toBeUndefined()
+    expect(b.last('match:started')).toBeUndefined()
+    expect((service as unknown as { waiting: unknown[] }).waiting).toHaveLength(0)
+  })
+
+  it('满池 + 工坊皮肤：牌堆精确 60 张，牌面只来自卡池（含工坊皮肤 id）', async () => {
     const pool: CardWithSkins[] = [
-      ...PRESET_CARDS,
+      ...fullPool(),
       { cardId: 'w1', name: '工坊卡', element: 'fire', skins: [{ skinId: 'w-s1', imageUrl: '/uploads/a.png' }] },
     ]
     const service = makeService(pool)
@@ -87,17 +120,14 @@ describe('MatchService 牌堆构建', () => {
     const view = red.views()[0]
     const deckTotal = view.state.deck.length + view.state.hands.red.length + view.state.hands.blue.length
     expect(deckTotal).toBe(DECK_SIZE)
-    const allowed = new Set<string>([
-      ...PRESET_CARDS.map(c => c.skins[0].skinId),
-      'w-s1',
-    ])
+    const allowed = new Set<string>(pool.flatMap(c => c.skins.map(s => s.skinId)))
     expect(view.state.hands.red.every((p: { id: string }) => allowed.has(p.id))).toBe(true)
   })
 
   it('工坊皮肤充足时：同名卡副本使用不同皮肤（阶段四）', async () => {
-    // 5 张工坊卡各 3 款皮肤（火属性单属性卡：与预设 2 张火属性卡竞争阶段一名额）
+    // 5 张工坊卡各 3 款皮肤（火属性单属性卡：与满池中 2 张火属性卡竞争阶段一名额）
     const pool: CardWithSkins[] = [
-      ...PRESET_CARDS,
+      ...fullPool(),
       ...Array.from({ length: 5 }, (_, i) => ({
         cardId: `w${i}`,
         name: `工坊卡${i}`,

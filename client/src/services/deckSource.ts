@@ -1,12 +1,11 @@
 /**
  * 对局牌堆数据源（与服务端 buildDeck 同源）：
- * 卡池 = 预设 51 张卡 + 有上架皮肤的工坊卡，按 core/deck.ts 四阶段抽 60 张（同名卡分配不同皮肤）。
+ * 卡池 = 有 ≥1 张上架（approved）皮肤的卡，按 core/deck.ts 四阶段抽 60 张（同名卡分配不同皮肤）。
  * 回合发牌制：初始手牌由引擎在回合开始时自动发，这里只提供牌堆。
  */
 import type { Piece } from '../core/types'
 import { ELEMENTS } from '../core/elements'
 import type { Element } from '../core/elements'
-import { PRESET_CARDS, freshDeck } from '../core/pieces'
 import { buildGameDeck } from '../core/deck'
 import type { CardWithSkins, DeckSkin } from '../core/deck'
 import { fetchApprovedPieces } from '../services/api'
@@ -16,7 +15,12 @@ export interface DeckSource {
   deck: Piece[]
 }
 
-/** 由公共池皮肤列表组装卡池（按名称归并：同名即同一张卡） */
+/** 组牌失败原因：server_down = 后端不可达；pool_empty = 公共池无上架卡 */
+export type DeckBuildFailure = 'server_down' | 'pool_empty'
+
+export type DeckBuildResult = ({ ok: true } & DeckSource) | { ok: false; reason: DeckBuildFailure }
+
+/** 由公共池皮肤列表组装卡池（按名称归并：同名即同一张卡；无上架皮肤不参战） */
 export function buildPoolFromApproved(approved: ApiPiece[]): CardWithSkins[] {
   const byName = new Map<string, { cardId: string; element: string; element2?: string | null; skins: DeckSkin[] }>()
   for (const p of approved) {
@@ -28,20 +32,6 @@ export function buildPoolFromApproved(approved: ApiPiece[]): CardWithSkins[] {
   }
 
   const pool: CardWithSkins[] = []
-  // 预设卡：代码为权威（内置无图外观恒可用，库中同名卡的上架皮肤并入）
-  for (const preset of PRESET_CARDS) {
-    const row = byName.get(preset.name)
-    byName.delete(preset.name)
-    pool.push({
-      ...preset,
-      cardId: row?.cardId ?? preset.cardId,
-      skins: [
-        ...preset.skins,
-        ...(row?.skins ?? []).filter(s => !preset.skins.some(x => x.skinId === s.skinId)),
-      ],
-    })
-  }
-  // 工坊卡：有上架皮肤才参战
   for (const [name, row] of byName) {
     if (row.skins.length === 0) continue
     const element = (ELEMENTS as string[]).includes(row.element) ? row.element as Element : 'normal'
@@ -59,18 +49,15 @@ export function buildPoolFromApproved(approved: ApiPiece[]): CardWithSkins[] {
   return pool
 }
 
-/** 生成对局牌堆：预设 + 工坊上架皮肤（60 张四阶段）；后端不可达时整副预设兜底 */
-export async function buildDeckFromServer(): Promise<DeckSource> {
+/** 生成对局牌堆：仅有上架皮肤的卡（60 张四阶段）；后端不可达或公共池为空时返回失败原因 */
+export async function buildDeckFromServer(): Promise<DeckBuildResult> {
+  let remote: ApiPiece[]
   try {
-    const remote = await fetchApprovedPieces()
-    return { deck: buildGameDeck(buildPoolFromApproved(remote)) }
+    remote = await fetchApprovedPieces()
   } catch {
-    // 后端未启动 / 网络失败 → 回退本地
+    return { ok: false, reason: 'server_down' }
   }
-  return { deck: freshDeck() }
-}
-
-/** 本地预设（离线兜底） */
-export function buildLocalDeck(): DeckSource {
-  return { deck: freshDeck() }
+  const deck = buildGameDeck(buildPoolFromApproved(remote))
+  if (deck.length === 0) return { ok: false, reason: 'pool_empty' }
+  return { ok: true, deck }
 }
