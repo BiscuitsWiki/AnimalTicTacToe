@@ -322,25 +322,52 @@ sudo docker compose -p att up -d
 
 ## 七、可选：域名 + HTTPS（发微信前的建议）
 
-客户端已做同源化（自动 ws/wss 切换），**无需改代码**，任选一层方案：
+客户端已做同源化（自动 ws/wss 切换），**无需改代码**，任选一层方案。
+本项目选定的域名规划：`minigame.elventtt.com`（A 记录指向 182.254.221.57），路线 = 先用 8080 免备案过渡，并行 ICP 备案，通过后切 HTTPS。
 
-### 方案 A：Caddy 自动 HTTPS（最简单，需域名已解析到服务器 IP）
+### 方案 0：域名 + 8080 过渡（免备案，立刻可用，2026-09-20 选定）
+
+国内服务器的备案拦截只针对 80/443，非标准端口（8080）不拦，所以域名解析后可直接访问：
+
+1. 注册域名（建议腾讯云/DNSPod，与服务器同账号，后续备案最顺）
+2. DNSPod 控制台加解析：主机记录 `minigame`、类型 `A`、记录值 `182.254.221.57`
+3. 本机复测（无需任何服务器改动，宿主已映射 `0.0.0.0:8080` → 容器 `:80`）：
+   ```powershell
+   node acceptance.mjs http://minigame.elventtt.com:8080
+   ```
+   期望 14/14（含 WS 匹配/建房两项，走的是同一 `/ws` 反代）
+
+注意：官方要求备案期间网站不对外开放，8080 过渡属常见"先跑起来"做法，被抽查时可能要求临时关闭。
+
+### 方案 A：Caddy 自动 HTTPS（备案通过后执行；推荐接法 = 复用宿主机 Caddy 反代 8080）
+
+宿主机 80/443 已被模板机预装的 Caddy 占用，直接用它反代（**不用改 compose、不用动 8080 映射**）：
 
 ```bash
-apt install -y caddy
-cat > /etc/caddy/Caddyfile <<'EOF'
-你的域名.com {
-    reverse_proxy 127.0.0.1:80
+sudo ss -tlnp | grep -E ':80|:443'      # 先确认 80/443 归 caddy（并确认 443 未被别的服务占用）
+cat | sudo tee /etc/caddy/Caddyfile <<'EOF'
+minigame.elventtt.com {
+    reverse_proxy 127.0.0.1:8080
 }
 EOF
-systemctl reload caddy
+sudo systemctl reload caddy
 ```
 
-Caddy 自动申请续期证书。注意：国内服务器 + 域名需先完成 ICP 备案（约 2 周）；免备案用境外服务器。
+前置条件：ICP 备案已通过 + 云安全组放行 80/443；Caddy 自动申请/续期证书（HTTP-01 需 80 可达）。
+切完后复测：`node acceptance.mjs https://minigame.elventtt.com`（客户端自动走 wss，微信内不再提示"非安全"）。
 
-### 方案 B：Cloudflare Tunnel（免开放端口、免服务器证书）
+备选接法（不推荐，会动 compose）：`.env` 设 `WEB_PORT=80` 并停掉占用 80 的服务，Caddyfile 内改 `reverse_proxy 127.0.0.1:80`。
 
-Cloudflare 仪表盘 → Zero Trust → Networks → Tunnels 创建隧道，指向 `http://att-web:80` 或 `http://127.0.0.1:80`，域名托管在 Cloudflare。强制 HTTPS 后客户端自动走 wss。
+### 备案要点（并行推进，约 2 周）
+
+- 入口：腾讯云控制台 → 备案 → 用这台轻量实例申请**备案服务号**（实例剩余时长需满足要求）
+- 材料：域名持有者/主体证件、网站负责人信息与核验、域名需实名且与备案主体一致
+- 顺序：腾讯云初审（1~2 工作日）→ 管局审核（1~2 周）→ 下发备案号后按方案 A 切 HTTPS
+- 小程序后续：微信后台「服务器域名」需填该域名的 request/ws 合法域名（要求 HTTPS + 已备案）
+
+### 方案 B：Cloudflare Tunnel（免备案替代，免开放端口、免服务器证书）
+
+Cloudflare 仪表盘 → Zero Trust → Networks → Tunnels 创建隧道，指向 `http://att-web:80` 或 `http://127.0.0.1:8080`，域名托管在 Cloudflare。强制 HTTPS 后客户端自动走 wss；代价是流量绕境外节点（国内延迟略高），合规上属灰色地带。
 
 配置后用验收脚本复测：`node acceptance.mjs https://你的域名.com`
 
