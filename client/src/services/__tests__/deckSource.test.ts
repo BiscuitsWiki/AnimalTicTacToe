@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({ fetchApprovedPieces: vi.fn() }))
 vi.mock('../api', () => ({ fetchApprovedPieces: mocks.fetchApprovedPieces }))
 
 import { buildDeckFromServer, buildPoolFromApproved } from '../deckSource'
-import { deckSizeFor } from '../../core/deck'
 import type { ApiPiece } from '../api'
 
 const approved: ApiPiece[] = [
@@ -41,13 +40,12 @@ describe('buildPoolFromApproved 卡池组装', () => {
 })
 
 describe('buildDeckFromServer 对局牌堆', () => {
-  it('已上架皮肤非空：按卡池自适应组出牌堆（2 张卡 → 下限 40 张），牌面皮肤 id 全部来自公共池', async () => {
+  it('已上架皮肤非空：组出 60 张牌堆，牌面皮肤 id 全部来自公共池', async () => {
     mocks.fetchApprovedPieces.mockResolvedValue(approved)
     const res = await buildDeckFromServer()
     expect(res.ok).toBe(true)
     if (res.ok) {
-      expect(res.deck).toHaveLength(deckSizeFor(2))   // 卡池 2 张卡 < 下限 → 取下限
-      expect(res.deck).toHaveLength(40)
+      expect(res.deck).toHaveLength(60)
       const allowed = new Set(approved.map(p => p.id))
       expect(res.deck.every(p => allowed.has(p.id))).toBe(true)
       expect(res.deck.some(p => p.name === '火狐')).toBe(true)

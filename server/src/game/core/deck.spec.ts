@@ -1,12 +1,10 @@
 /**
- * 组牌算法（core/deck.ts）单元测试：四阶段抽取 + 牌堆张数自适应。
+ * 组牌算法（core/deck.ts）单元测试：60 张四阶段抽取。
  * 随机源注入线性同余（可复现），覆盖阶段一的每属性 2 张 / 不足全取、
  * 阶段二 18 张不同名 / 不足全取、阶段三补足与皮肤未用尽优先、阶段四皮肤分配（含复用）。
  */
 import { describe, expect, it } from 'vitest'
-import {
-  buildGameDeck, DECK_SIZE_MAX, DECK_SIZE_MIN, deckSizeFor, PHASE1_PER_ELEMENT, PHASE2_COUNT,
-} from './deck.js'
+import { buildGameDeck, DECK_SIZE, PHASE1_PER_ELEMENT, PHASE2_COUNT } from './deck.js'
 import type { CardWithSkins } from './deck.js'
 import type { Element } from './elements.js'
 import { ELEMENTS } from './elements.js'
@@ -66,33 +64,10 @@ describe('buildGameDeck 四阶段组牌', () => {
     expect(distinctNames(deck)).toBe(51)
   })
 
-  it('默认张数：按卡池自适应（满池夹具 51 张卡 → 51 张牌堆，全池覆盖）', () => {
+  it('默认张数：满池夹具补足到 60（阶段三只重复已入选的卡，不引入新卡）', () => {
     const deck = buildGameDeck(fullPool(), { rng: lcg() })
-    expect(deck).toHaveLength(deckSizeFor(51))
-    expect(deck).toHaveLength(51)
+    expect(deck).toHaveLength(DECK_SIZE)
     expect(distinctNames(deck)).toBe(51)
-  })
-
-  it('牌堆张数自适应：池子小取下限、池子大取上限、区间内等于卡池规模', () => {
-    expect(deckSizeFor(1)).toBe(DECK_SIZE_MIN)
-    expect(deckSizeFor(30)).toBe(DECK_SIZE_MIN)
-    expect(deckSizeFor(40)).toBe(40)
-    expect(deckSizeFor(47)).toBe(47)
-    expect(deckSizeFor(54)).toBe(DECK_SIZE_MAX)
-    expect(deckSizeFor(198)).toBe(DECK_SIZE_MAX)
-    // 卡池小于下限时仍按下限出牌（保证抽牌量），全部为重复副本
-    const small: CardWithSkins[] = [single('only-1', 'fire'), single('only-2', 'water')]
-    const deck = buildGameDeck(small, { rng: lcg() })
-    expect(deck).toHaveLength(DECK_SIZE_MIN)
-    expect(new Set(deck.map(p => p.cardId))).toEqual(new Set(['only-1', 'only-2']))
-  })
-
-  it('卡池大于上限：牌堆恰好等于上限，且不产生重复副本', () => {
-    const pool = ELEMENTS.flatMap((el, i) => [single(`s${i}-1`, el), single(`s${i}-2`, el), single(`s${i}-3`, el)])
-    expect(pool).toHaveLength(54)
-    const deck = buildGameDeck(pool, { rng: lcg() })
-    expect(deck).toHaveLength(DECK_SIZE_MAX)
-    expect(distinctNames(deck)).toBe(DECK_SIZE_MAX)
   })
 
   it('阶段一：某属性不足 2 张时该属性全取，其余属性仍各 2 张', () => {
@@ -132,9 +107,8 @@ describe('buildGameDeck 四阶段组牌', () => {
   it('阶段三：优先抽"还有未用皮肤"的卡 —— 同名副本皮肤互不相同', () => {
     // 池中全部卡皮肤数 ≥ 2，补足的重复副本必然能拿到不同皮肤
     const pool = fullPool().map(c => ({ ...c, skins: [...c.skins, { skinId: `${c.cardId}-extra` }] }))
-    // 显式指定 64 张（> 卡池 51）：容量留给阶段三，专门验证补足行为
-    const deck = buildGameDeck(pool, { rng: lcg(), size: 64 })
-    expect(deck).toHaveLength(64)
+    const deck = buildGameDeck(pool, { rng: lcg() })
+    expect(deck).toHaveLength(DECK_SIZE)
     const byCard = new Map<string, string[]>()
     for (const p of deck) {
       byCard.set(p.cardId!, [...(byCard.get(p.cardId!) ?? []), p.id])
@@ -148,8 +122,8 @@ describe('buildGameDeck 四阶段组牌', () => {
 
   it('阶段三：所有卡皮肤都用尽时退化为随机重复（同名同皮）', () => {
     const pool = fullPool()      // 每张卡仅 1 款皮肤
-    const deck = buildGameDeck(pool, { rng: lcg(), size: 64 })
-    expect(deck).toHaveLength(64)
+    const deck = buildGameDeck(pool, { rng: lcg() })
+    expect(deck).toHaveLength(DECK_SIZE)
     const byCard = new Map<string, string[]>()
     for (const p of deck) byCard.set(p.cardId!, [...(byCard.get(p.cardId!) ?? []), p.id])
     const over = [...byCard.entries()].filter(([, ids]) => ids.length > 1)
@@ -189,10 +163,8 @@ describe('buildGameDeck 四阶段组牌', () => {
     expect(buildGameDeck([single('one', 'fire')], { rng: lcg(), size: 0 })).toEqual([])
   })
 
-  it('常量守护：牌堆下限 40 / 上限 54 / 阶段一每属性 2 张 / 阶段二 18 张', () => {
-    expect(DECK_SIZE_MIN).toBe(40)
-    expect(DECK_SIZE_MAX).toBe(54)
-    expect(PHASE1_PER_ELEMENT * ELEMENTS.length + PHASE2_COUNT).toBe(DECK_SIZE_MAX)
+  it('常量守护：牌堆 60 张 / 阶段一每属性 2 张 / 阶段二 18 张', () => {
+    expect(DECK_SIZE).toBe(60)
     expect(PHASE1_PER_ELEMENT).toBe(2)
     expect(PHASE2_COUNT).toBe(18)
   })
