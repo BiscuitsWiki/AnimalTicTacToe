@@ -1,6 +1,6 @@
 /**
  * 对局牌堆数据源（与服务端 buildDeck 同源）：
- * 卡池 = 有 ≥1 张上架（approved）皮肤的卡，按 core/deck.ts 四阶段抽 60 张（同名卡分配不同皮肤）。
+ * 卡池 = 有 ≥1 张上架（approved）皮肤的卡，按 core/deck.ts 四阶段组牌（牌堆张数随卡池自适应，同名卡分配不同皮肤）。
  * 回合发牌制：初始手牌由引擎在回合开始时自动发，这里只提供牌堆。
  */
 import type { Piece } from '../core/types'
@@ -49,7 +49,7 @@ export function buildPoolFromApproved(approved: ApiPiece[]): CardWithSkins[] {
   return pool
 }
 
-/** 生成对局牌堆：仅有上架皮肤的卡（60 张四阶段）；后端不可达或公共池为空时返回失败原因 */
+/** 生成对局牌堆：仅有上架皮肤的卡（四阶段，张数随卡池自适应）；后端不可达或公共池为空时返回失败原因 */
 export async function buildDeckFromServer(): Promise<DeckBuildResult> {
   let remote: ApiPiece[]
   try {

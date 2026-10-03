@@ -1,6 +1,9 @@
 /**
- * 对局牌堆构建（卡牌 + 皮肤模型）：从卡池抽取 60 张，四阶段。
+ * 对局牌堆构建（卡牌 + 皮肤模型）：从卡池抽取牌堆，四阶段。
  * 与 server/src/game/core/deck.ts 保持同步拷贝（服务端权威裁决）。
+ *
+ * 牌堆张数随卡池自适应（DECK_SIZE_MIN ~ DECK_SIZE_MAX）：卡池小则少产生重复副本，
+ * 卡池足够大时按算法两个配额的满额点抽取。
  *
  * 阶段一：单属性卡——18 属性 × 各 2 张名称不同的卡（某属性不足则全取）
  * 阶段二：双属性卡——随机 18 张名称不同的卡（不足则全取）
@@ -11,12 +14,25 @@ import { ELEMENTS } from './elements'
 import type { Element } from './elements'
 import type { Piece } from './types'
 
-/** 牌堆总张数 */
-export const DECK_SIZE = 60
 /** 阶段一：每个单属性抽 2 张（名称不同） */
 export const PHASE1_PER_ELEMENT = 2
 /** 阶段二：双属性随机抽 18 张（名称不同） */
 export const PHASE2_COUNT = 18
+/** 牌堆张数下限：卡池很小时也保证足够抽牌（避免牌堆过早耗尽） */
+export const DECK_SIZE_MIN = 40
+/**
+ * 牌堆张数上限 = 单属性满配额（18 属性 × 2 张）+ 双属性配额 = 54。
+ * 即算法两个配额刚好装下的张数，再多只会增加同名重复副本而非新卡。
+ */
+export const DECK_SIZE_MAX = PHASE1_PER_ELEMENT * ELEMENTS.length + PHASE2_COUNT
+
+/**
+ * 牌堆张数自适应：卡池规模在 [MIN, MAX] 内取卡池规模（牌堆尽量覆盖全池、减少重复），
+ * 小于 MIN 取下限（小卡池也保证抽牌量），大于 MAX 取上限（多出的容量只会产生重复副本）。
+ */
+export function deckSizeFor(poolSize: number): number {
+  return Math.min(DECK_SIZE_MAX, Math.max(DECK_SIZE_MIN, poolSize))
+}
 
 /** 一款皮肤（skinId = 皮肤行主键；imageUrl 可选） */
 export interface DeckSkin {
@@ -34,7 +50,7 @@ export interface CardWithSkins {
 }
 
 export interface BuildDeckOptions {
-  /** 牌堆张数（默认 DECK_SIZE） */
+  /** 牌堆张数（默认按卡池规模自适应，见 deckSizeFor） */
   size?: number
   /** 随机源（单测注入用，默认 Math.random） */
   rng?: () => number
@@ -57,13 +73,14 @@ function isDual(c: CardWithSkins): boolean {
 
 /**
  * 由卡池构建对局牌堆（纯函数，前后端共用）。
- * 无可用皮肤的卡不参战；卡池为空返回空牌堆。
+ * 无可用皮肤的卡不参战；卡池为空返回空牌堆；牌堆张数默认随卡池自适应。
  */
 export function buildGameDeck(pool: CardWithSkins[], opts: BuildDeckOptions = {}): Piece[] {
   const rng = opts.rng ?? Math.random
-  const size = opts.size ?? DECK_SIZE
   const cards = pool.filter(c => c.skins.length > 0)
-  if (cards.length === 0 || size <= 0) return []
+  if (cards.length === 0) return []
+  const size = opts.size ?? deckSizeFor(cards.length)
+  if (size <= 0) return []
 
   /** 已入选副本数：cardId -> 张数 */
   const picked = new Map<string, number>()

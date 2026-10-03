@@ -13,7 +13,7 @@ vi.hoisted(() => {
 // eslint-disable-next-line import/first
 import { MatchService } from './match.service.js'
 import type { ClientView } from './match.service.js'
-import { DECK_SIZE } from './core/deck.js'
+import { deckSizeFor } from './core/deck.js'
 import type { CardWithSkins } from './core/deck.js'
 import { ELEMENTS } from './core/elements.js'
 
@@ -105,7 +105,7 @@ describe('MatchService 牌堆构建', () => {
     expect((service as unknown as { waiting: unknown[] }).waiting).toHaveLength(0)
   })
 
-  it('满池 + 工坊皮肤：牌堆精确 60 张，牌面只来自卡池（含工坊皮肤 id）', async () => {
+  it('满池 + 工坊皮肤：牌堆按卡池自适应，牌面只来自卡池（含工坊皮肤 id）', async () => {
     const pool: CardWithSkins[] = [
       ...fullPool(),
       { cardId: 'w1', name: '工坊卡', element: 'fire', skins: [{ skinId: 'w-s1', imageUrl: '/uploads/a.png' }] },
@@ -119,7 +119,7 @@ describe('MatchService 牌堆构建', () => {
     )
     const view = red.views()[0]
     const deckTotal = view.state.deck.length + view.state.hands.red.length + view.state.hands.blue.length
-    expect(deckTotal).toBe(DECK_SIZE)
+    expect(deckTotal).toBe(deckSizeFor(pool.length))
     const allowed = new Set<string>(pool.flatMap(c => c.skins.map(s => s.skinId)))
     expect(view.state.hands.red.every((p: { id: string }) => allowed.has(p.id))).toBe(true)
   })
@@ -145,7 +145,7 @@ describe('MatchService 牌堆构建', () => {
     const service2 = service as unknown as { rooms: Map<string, { state: { deck: unknown[]; hands: Record<string, { id: string; cardId?: string }[]> } }> }
     const state = [...service2.rooms.values()][0].state
     const all = [...state.deck, ...state.hands.red, ...state.hands.blue] as { id: string; cardId?: string }[]
-    expect(all).toHaveLength(DECK_SIZE)
+    expect(all).toHaveLength(deckSizeFor(pool.length))
     const byCard = new Map<string, string[]>()
     for (const p of all) byCard.set(p.cardId!, [...(byCard.get(p.cardId!) ?? []), p.id])
     for (const [cardId, ids] of byCard) {

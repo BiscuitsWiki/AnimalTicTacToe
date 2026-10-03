@@ -584,7 +584,8 @@ export class MatchService {
   }
 
   /**
-   * 组牌：卡池 = 有 ≥1 张上架（approved）皮肤的卡；四阶段抽 60 张（同名卡分配不同皮肤）。
+   * 组牌：卡池 = 有 ≥1 张上架（approved）皮肤的卡；四阶段组牌，张数随卡池自适应
+   * （见 core/deck.ts 的 deckSizeFor；同名卡分配不同皮肤）。
    * 详见 core/deck.ts（与客户端 AI 局同源）。
    */
   private async buildDeck(): Promise<Piece[]> {

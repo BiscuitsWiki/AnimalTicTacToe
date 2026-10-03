@@ -1,9 +1,11 @@
 /**
  * 客户端组牌算法守护（与 server/src/game/core/deck.ts 同源拷贝）：
- * 卡池 60 张四阶段产出、每属性 2 张不同名单属性卡、同名副本皮肤互不相同、牌面皮肤 id 全部来自卡池。
+ * 四阶段产出、牌堆张数自适应、每属性 2 张不同名单属性卡、同名副本皮肤互不相同、牌面皮肤 id 全部来自卡池。
  */
 import { describe, expect, it } from 'vitest'
-import { buildGameDeck, DECK_SIZE, PHASE1_PER_ELEMENT, PHASE2_COUNT } from '../deck'
+import {
+  buildGameDeck, DECK_SIZE_MAX, DECK_SIZE_MIN, deckSizeFor, PHASE1_PER_ELEMENT, PHASE2_COUNT,
+} from '../deck'
 import type { CardWithSkins } from '../deck'
 import type { Element } from '../elements'
 import { ELEMENTS } from '../elements'
@@ -42,16 +44,25 @@ function fullPool(): CardWithSkins[] {
 }
 
 describe('客户端 buildGameDeck', () => {
-  it('常量守护：60 张 / 每属性 2 张 / 双属性 18 张上限', () => {
-    expect(DECK_SIZE).toBe(60)
+  it('常量守护：牌堆下限 40 / 上限 54 / 每属性 2 张 / 双属性 18 张上限', () => {
+    expect(DECK_SIZE_MIN).toBe(40)
+    expect(DECK_SIZE_MAX).toBe(54)
     expect(PHASE1_PER_ELEMENT).toBe(2)
     expect(PHASE2_COUNT).toBe(18)
   })
 
-  it('满池抽 60 张：每属性 2 张不同名单属性卡 + 15 张双属性，皮肤 id 全部来自卡池', () => {
+  it('牌堆张数自适应：区间内等于卡池规模，小池取下限、大池取上限', () => {
+    expect(deckSizeFor(1)).toBe(DECK_SIZE_MIN)
+    expect(deckSizeFor(40)).toBe(40)
+    expect(deckSizeFor(51)).toBe(51)
+    expect(deckSizeFor(72)).toBe(DECK_SIZE_MAX)
+  })
+
+  it('满池自适应抽 51 张：每属性 2 张不同名单属性卡 + 15 张双属性，皮肤 id 全部来自卡池', () => {
     const pool = fullPool()
     const deck = buildGameDeck(pool, { rng: lcg() })
-    expect(deck).toHaveLength(60)
+    expect(deck).toHaveLength(deckSizeFor(pool.length))
+    expect(deck).toHaveLength(51)
     for (const el of ELEMENTS) {
       const ids = new Set(deck.filter(p => p.element === el && !p.element2).map(p => p.cardId))
       expect(ids.size).toBe(2)
@@ -75,8 +86,9 @@ describe('客户端 buildGameDeck', () => {
         ],
       })),
     ]
-    const deck = buildGameDeck(pool, { rng: lcg() })
-    expect(deck).toHaveLength(60)
+    // 显式指定 64 张（> 卡池）：容量留给阶段三，验证同名副本的皮肤分配
+    const deck = buildGameDeck(pool, { rng: lcg(), size: 64 })
+    expect(deck).toHaveLength(64)
     const byCard = new Map<string, string[]>()
     for (const p of deck) byCard.set(p.cardId!, [...(byCard.get(p.cardId!) ?? []), p.id])
     const repeated = [...byCard.entries()].filter(([, ids]) => ids.length > 1)
